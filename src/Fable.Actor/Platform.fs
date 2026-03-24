@@ -27,7 +27,7 @@ let private atomNormal : obj = nativeOnly
 
 let killProcess (pid: Pid) : unit = exitPid pid atomKill
 let exitNormal () : unit = exit atomNormal
-let trapExits () : unit = trapExit ()
+let trapExits () : unit = trapExit () |> ignore
 let formatReason (reason: obj) : string = formatTerm reason
 
 // ============================================================================
