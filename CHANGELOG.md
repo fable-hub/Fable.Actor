@@ -1,10 +1,14 @@
 ---
-last_commit_released: 2d956809c7586e3d00a8b9072edbbf631b1de061
+last_commit_released: 3d0b4414a367b7ebef27f108df9de17385f43a6a
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.6 - 2026-03-26
+
+<strong><small>[View changes on Github](https://github.com/dbrattli/Fable.Actor/compare/2d956809c7586e3d00a8b9072edbbf631b1de061..3d0b4414a367b7ebef27f108df9de17385f43a6a)</small></strong>
 
 ## 5.0.0-rc.5 - 2026-03-24
 
