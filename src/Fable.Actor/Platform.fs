@@ -15,11 +15,8 @@ open Fable.Beam.Erlang
 // Atom literals
 // ============================================================================
 
-[<Emit("kill")>]
-let private atomKill : obj = nativeOnly
-
-[<Emit("normal")>]
-let private atomNormal : obj = nativeOnly
+let private atomKill: Atom = binaryToAtom "kill"
+let private atomNormal: Atom = binaryToAtom "normal"
 
 // ============================================================================
 // Process helpers (use Fable.Beam.Erlang with actor-specific atoms)
@@ -93,19 +90,17 @@ let isChildExited (msg: obj) : bool = nativeOnly
 // Timer
 // ============================================================================
 
-type private TimerControl =
-    | [<CompiledName("cancel")>] Cancel
+type private TimerControl = | [<CompiledName("cancel")>] Cancel
 
 /// Schedule a callback after ms milliseconds.
-/// Returns a handle (pid) for cancellation.
-let timerSchedule (ms: int) (callback: unit -> unit) : obj =
-    box (spawn (fun () ->
+/// Returns the timer process pid for cancellation.
+let timerSchedule (ms: int) (callback: unit -> unit) : Pid =
+    spawn (fun () ->
         match Erlang.receive<TimerControl> ms with
         | Some Cancel -> ()
-        | None -> callback ()))
+        | None -> callback ())
 
-/// Cancel a scheduled timer.
-[<Emit("$0 ! cancel, ok")>]
-let timerCancel (timer: obj) : unit = nativeOnly
+/// Cancel a scheduled timer by sending the cancel atom to its process.
+let timerCancel (timer: Pid) : unit = Fable.Beam.Erlang.send timer (box Cancel)
 
 #endif

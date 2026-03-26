@@ -49,11 +49,12 @@ type ActorBuilder() =
     }
 
     member _.TryWith(body: ActorOp<'T>, handler: exn -> ActorOp<'T>) : ActorOp<'T> = {
-        Run = fun cont ->
-            try
-                body.Run cont
-            with ex ->
-                (handler ex).Run cont
+        Run =
+            fun cont ->
+                try
+                    body.Run cont
+                with ex ->
+                    (handler ex).Run cont
     }
 
 #else
@@ -67,7 +68,7 @@ type Actor<'Msg> = {
     Cts: System.Threading.CancellationTokenSource
 } with
 
-    member this.Pid : obj = box this.Mb
+    member this.Pid: obj = box this.Mb
 
     member this.Receive() : Async<'Msg> = this.Mb.Receive()
 
@@ -85,8 +86,7 @@ type ActorBuilder() =
     member _.Combine(first: Async<unit>, second: Async<'T>) : Async<'T> =
         async.Combine(first, async.Delay(fun () -> second))
 
-    member _.TryWith(body: Async<'T>, handler: exn -> Async<'T>) : Async<'T> =
-        async.TryWith(body, handler)
+    member _.TryWith(body: Async<'T>, handler: exn -> Async<'T>) : Async<'T> = async.TryWith(body, handler)
 
 #endif
 
@@ -130,26 +130,36 @@ let formatReason (reason: obj) : string = Platform.formatReason reason
 
 /// Send a message and await a reply (inside actor { }).
 let call (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> = {
-    Run = fun cont ->
-        let ref = makeRef ()
-        let callerPid = Fable.Beam.Erlang.self ()
-        let rc: ReplyChannel<'Reply> = { Reply = fun reply -> sendReply callerPid ref reply }
-        sendMsg actor.Pid (box (msg, rc))
-        cont (unbox (recvReply ref))
+    Run =
+        fun cont ->
+            let ref = makeRef ()
+            let callerPid = Fable.Beam.Erlang.self ()
+
+            let rc: ReplyChannel<'Reply> = {
+                Reply = fun reply -> sendReply callerPid ref reply
+            }
+
+            sendMsg actor.Pid (box (msg, rc))
+            cont (unbox (recvReply ref))
 }
 
 /// Send a message and await a reply with a timeout in milliseconds.
 /// Raises TimeoutException if no reply is received within the timeout.
 let callWithTimeout (timeout: int) (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> = {
-    Run = fun cont ->
-        let ref = makeRef ()
-        let callerPid = Fable.Beam.Erlang.self ()
-        let rc: ReplyChannel<'Reply> = { Reply = fun reply -> sendReply callerPid ref reply }
-        sendMsg actor.Pid (box (msg, rc))
+    Run =
+        fun cont ->
+            let ref = makeRef ()
+            let callerPid = Fable.Beam.Erlang.self ()
 
-        match recvReplyWithTimeout ref timeout with
-        | Some reply -> cont (unbox<'Reply> reply)
-        | None -> raise (System.TimeoutException("Actor call timed out"))
+            let rc: ReplyChannel<'Reply> = {
+                Reply = fun reply -> sendReply callerPid ref reply
+            }
+
+            sendMsg actor.Pid (box (msg, rc))
+
+            match recvReplyWithTimeout ref timeout with
+            | Some reply -> cont (unbox<'Reply> reply)
+            | None -> raise (System.TimeoutException("Actor call timed out"))
 }
 
 /// Receive next message (free function).
@@ -163,7 +173,10 @@ let receive<'Msg> () : ActorOp<'Msg> = {
 /// When the external token is cancelled, the actor's CTS is also cancelled.
 let spawnWithToken (cancellationToken: System.Threading.CancellationToken) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
     let cts = new System.Threading.CancellationTokenSource()
-    cancellationToken.Register(fun () -> cts.Cancel()) |> ignore
+
+    cancellationToken.Register(fun () -> cts.Cancel())
+    |> ignore
+
     let mutable inbox: Actor<'Msg> option = None
 
     let mb =
@@ -205,12 +218,7 @@ let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) :
                 try
                     do! body actor
                 with ex ->
-                    parent.Post(
-                        unbox {
-                            Pid = box mb
-                            Reason = box ex
-                        }
-                    )
+                    parent.Post(unbox { Pid = box mb; Reason = box ex })
             })
 
     match inbox with
@@ -228,9 +236,7 @@ let trapExits () : unit = ()
 /// Send a message and await a reply (inside actor { }).
 let call (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> =
     actor {
-        let! reply =
-            target.Mb.PostAndAsyncReply(fun rc ->
-                (msg, { Reply = fun r -> rc.Reply(r) }))
+        let! reply = target.Mb.PostAndAsyncReply(fun rc -> (msg, { Reply = fun r -> rc.Reply(r) }))
 
         return reply
     }
@@ -290,16 +296,17 @@ let spawnSupervised
     (body: Actor<'Msg> -> ActorOp<unit>)
     : SupervisedChild<'ParentMsg, 'Msg> =
     let child = spawnLinked parent body
-    { Actor = child; Body = body; Strategy = strategy }
+
+    {
+        Actor = child
+        Body = body
+        Strategy = strategy
+    }
 
 /// Handle a ChildExited event for a supervised child.
 /// Returns true if the child was restarted, false if stopped/not matching.
 /// Raises ProcessExitException if Escalate.
-let handleChildExit
-    (parent: Actor<'ParentMsg>)
-    (supervised: SupervisedChild<'ParentMsg, 'Msg>)
-    (exited: ChildExited)
-    : bool =
+let handleChildExit (parent: Actor<'ParentMsg>) (supervised: SupervisedChild<'ParentMsg, 'Msg>) (exited: ChildExited) : bool =
     let (OneForOne decider) = supervised.Strategy
 
     let ex =
@@ -330,16 +337,17 @@ let spawnSupervised
     (body: Actor<'Msg> -> Async<unit>)
     : SupervisedChild<'ParentMsg, 'Msg> =
     let child = spawnLinked parent body
-    { Actor = child; Body = body; Strategy = strategy }
+
+    {
+        Actor = child
+        Body = body
+        Strategy = strategy
+    }
 
 /// Handle a ChildExited event for a supervised child.
 /// Returns true if the child was restarted, false if stopped/not matching.
 /// Raises ProcessExitException if Escalate.
-let handleChildExit
-    (parent: Actor<'ParentMsg>)
-    (supervised: SupervisedChild<'ParentMsg, 'Msg>)
-    (exited: ChildExited)
-    : bool =
+let handleChildExit (parent: Actor<'ParentMsg>) (supervised: SupervisedChild<'ParentMsg, 'Msg>) (exited: ChildExited) : bool =
     let (OneForOne decider) = supervised.Strategy
 
     let ex =
@@ -394,16 +402,17 @@ let start (initialState: 'State) (handler: 'State -> 'Msg -> Next<'State>) : Act
 
 #if FABLE_COMPILER_BEAM
 
-/// Schedule a timer callback. Returns an opaque handle for cancellation.
-let schedule (ms: int) (callback: unit -> unit) : obj = timerSchedule ms callback
+/// Schedule a timer callback. Returns a typed handle for cancellation.
+let schedule (ms: int) (callback: unit -> unit) : TimerHandle =
+    TimerHandle(box (timerSchedule ms callback))
 
 /// Cancel a scheduled timer.
-let cancelTimer (timer: obj) : unit = timerCancel timer
+let cancelTimer (TimerHandle handle: TimerHandle) : unit = timerCancel (unbox<Pid> handle)
 
 #else
 
-/// Schedule a timer callback. Returns a cancellation handle.
-let schedule (ms: int) (callback: unit -> unit) : obj =
+/// Schedule a timer callback. Returns a typed handle for cancellation.
+let schedule (ms: int) (callback: unit -> unit) : TimerHandle =
     let cts = new System.Threading.CancellationTokenSource()
 
     Async.StartImmediate(
@@ -414,11 +423,11 @@ let schedule (ms: int) (callback: unit -> unit) : obj =
         cts.Token
     )
 
-    box cts
+    TimerHandle(box cts)
 
 /// Cancel a scheduled timer.
-let cancelTimer (timer: obj) : unit =
-    (unbox<System.Threading.CancellationTokenSource> timer).Cancel()
+let cancelTimer (TimerHandle handle: TimerHandle) : unit =
+    (unbox<System.Threading.CancellationTokenSource> handle).Cancel()
 
 #endif
 
