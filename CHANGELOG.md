@@ -1,4 +1,5 @@
 ---
+name: Fable.Actor
 last_commit_released: 3d0b4414a367b7ebef27f108df9de17385f43a6a
 ---
 
