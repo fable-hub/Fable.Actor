@@ -22,7 +22,7 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Fable.Beam" Version="5.0.0-rc.14" />
+    <PackageReference Include="Fable.Beam" Version="5.0.0-rc.15" />
     <PackageReference Include="Fable.Core" Version="5.0.0-rc.1" />
   </ItemGroup>
 </Project>
