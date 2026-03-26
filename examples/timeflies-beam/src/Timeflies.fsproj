@@ -8,7 +8,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../timeflies/src/Timeflies.Common.fsproj" />
-    <PackageReference Include="Fable.Beam" Version="5.0.0-rc.14" />
-    <PackageReference Include="Fable.Beam.Cowboy" Version="5.0.0-rc.14" />
+    <PackageReference Include="Fable.Beam" Version="5.0.0-rc.15" />
+    <PackageReference Include="Fable.Beam.Cowboy" Version="5.0.0-rc.15" />
   </ItemGroup>
 </Project>
