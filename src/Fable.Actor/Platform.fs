@@ -9,23 +9,23 @@ module Fable.Actor.Platform
 open Fable.Core
 open Fable.Core.BeamInterop
 open Fable.Actor.Types
-open Fable.Beam.Erlang
+open Fable.Beam
 
 // ============================================================================
 // Atom literals
 // ============================================================================
 
-let private atomKill: Atom = binaryToAtom "kill"
-let private atomNormal: Atom = binaryToAtom "normal"
+let private atomKill: Atom = Erlang.binaryToAtom "kill"
+let private atomNormal: Atom = Erlang.binaryToAtom "normal"
 
 // ============================================================================
 // Process helpers (use Fable.Beam.Erlang with actor-specific atoms)
 // ============================================================================
 
-let killProcess (pid: Pid) : unit = exitPid pid atomKill
-let exitNormal () : unit = exit atomNormal
-let trapExits () : unit = trapExit () |> ignore
-let formatReason (reason: obj) : string = formatTerm reason
+let killProcess (pid: Pid) : unit = Erlang.exitPid pid atomKill
+let exitNormal () : unit = Erlang.exit atomNormal
+let trapExits () : unit = Erlang.trapExit () |> ignore
+let formatReason (reason: obj) : string = Erlang.formatTerm reason
 
 // ============================================================================
 // Internal message protocol
@@ -65,7 +65,7 @@ let rec receiveMsg (cont: obj -> unit) : unit =
     | ActorTimer(_, callback) ->
         callback (box ())
         receiveMsg cont
-    | Exit(_, reason) when exactEquals reason atomNormal -> receiveMsg cont
+    | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
     | Exit(pid, reason) -> cont (box ({ Pid = box pid; Reason = reason }: ChildExited))
 
 /// Blocking selective receive for a reply matching a specific ref.
@@ -95,12 +95,12 @@ type private TimerControl = | [<CompiledName("cancel")>] Cancel
 /// Schedule a callback after ms milliseconds.
 /// Returns the timer process pid for cancellation.
 let timerSchedule (ms: int) (callback: unit -> unit) : Pid =
-    spawn (fun () ->
+    Erlang.spawn (fun () ->
         match Erlang.receive<TimerControl> ms with
         | Some Cancel -> ()
         | None -> callback ())
 
 /// Cancel a scheduled timer by sending the cancel atom to its process.
-let timerCancel (timer: Pid) : unit = Fable.Beam.Erlang.send timer (box Cancel)
+let timerCancel (timer: Pid) : unit = Erlang.send timer (box Cancel)
 
 #endif
