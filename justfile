@@ -43,10 +43,12 @@ all: check build
 
 # --- Packaging ---
 
-# Create NuGet package
+# Create NuGet package with version from CHANGELOG.md
 pack:
-    dotnet build {{src_path}}
-    dotnet pack {{src_path}} -c Release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## \([^ ]*\).*/\1/')
+    dotnet pack {{src_path}} -c Release -p:PackageVersion=$VERSION -p:InformationalVersion=$VERSION
 
 # Create NuGet package with specific version (used in CI)
 pack-version version:
