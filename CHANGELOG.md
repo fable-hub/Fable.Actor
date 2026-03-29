@@ -1,11 +1,19 @@
 ---
-last_commit_released: 1431c3ddbd25cea60033e39c7b60353e81dffdfa
+last_commit_released: a83fae8d2d0ba1ac769626a2172939967efd2e6c
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.8 - 2026-03-29
+
+### 🐞 Bug Fixes
+
+* Extract version from CHANGELOG.md in pack recipe (#22) ([a83fae8](https://github.com/dbrattli/Fable.Actor/commit/a83fae8d2d0ba1ac769626a2172939967efd2e6c))
+
+<strong><small>[View changes on Github](https://github.com/dbrattli/Fable.Actor/compare/1431c3ddbd25cea60033e39c7b60353e81dffdfa..a83fae8d2d0ba1ac769626a2172939967efd2e6c)</small></strong>
 
 ## 5.0.0-rc.7 - 2026-03-29
 
