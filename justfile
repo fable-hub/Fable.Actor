@@ -52,6 +52,10 @@ pack:
 pack-version version:
     dotnet pack {{src_path}} -c Release -p:PackageVersion={{version}} -p:InformationalVersion={{version}}
 
+# Release: pack and push to NuGet
+release: pack
+    dotnet nuget push 'src/**/Release/*.nupkg' -s https://api.nuget.org/v3/index.json -k $NUGET_KEY
+
 # Run EasyBuild.ShipIt for release management
 shipit *args:
     dotnet shipit --pre-release rc {{args}}
