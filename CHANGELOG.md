@@ -1,11 +1,19 @@
 ---
+last_commit_released: 1431c3ddbd25cea60033e39c7b60353e81dffdfa
 name: Fable.Actor
-last_commit_released: 3d0b4414a367b7ebef27f108df9de17385f43a6a
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.7 - 2026-03-29
+
+### 🏗️ Breaking changes
+
+* Bump Fable.Beam to 5.0.0-rc.22 and use RequireQualifiedAccess (#19) ([5dd3e79](https://github.com/dbrattli/Fable.Actor/commit/5dd3e79fe862ef695486194ce54cee20872cc871))
+
+<strong><small>[View changes on Github](https://github.com/dbrattli/Fable.Actor/compare/3d0b4414a367b7ebef27f108df9de17385f43a6a..1431c3ddbd25cea60033e39c7b60353e81dffdfa)</small></strong>
 
 ## 5.0.0-rc.6 - 2026-03-26
 
