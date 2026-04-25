@@ -1,11 +1,19 @@
 ---
-last_commit_released: a83fae8d2d0ba1ac769626a2172939967efd2e6c
+last_commit_released: 4aaed250ee7958515eec0750861338d90662649f
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.9 - 2026-04-25
+
+### 🏗️ Breaking changes
+
+* Bump Fable.Beam to 5.0.0-rc.27 and adopt typed Pid/Ref (#24) ([4aaed25](https://github.com/dbrattli/Fable.Actor/commit/4aaed250ee7958515eec0750861338d90662649f))
+
+<strong><small>[View changes on Github](https://github.com/dbrattli/Fable.Actor/compare/a83fae8d2d0ba1ac769626a2172939967efd2e6c..4aaed250ee7958515eec0750861338d90662649f)</small></strong>
 
 ## 5.0.0-rc.8 - 2026-03-29
 
