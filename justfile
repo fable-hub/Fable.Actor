@@ -32,7 +32,7 @@ check:
 
 # Format source files
 format:
-    dotnet fantomas src -r
+    dotnet fantomas src
 
 # Setup tooling
 restore:

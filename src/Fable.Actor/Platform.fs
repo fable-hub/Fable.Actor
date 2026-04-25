@@ -22,7 +22,7 @@ let private atomNormal: Atom = Erlang.binaryToAtom "normal"
 // Process helpers (use Fable.Beam.Erlang with actor-specific atoms)
 // ============================================================================
 
-let killProcess (pid: Pid) : unit = Erlang.exitPid pid atomKill
+let killProcess (pid: Pid<'Msg>) : unit = Erlang.exitPid pid atomKill
 let exitNormal () : unit = Erlang.exit atomNormal
 let trapExits () : unit = Erlang.trapExit () |> ignore
 let formatReason (reason: obj) : string = Erlang.formatTerm reason
@@ -36,7 +36,7 @@ let formatReason (reason: obj) : string = Erlang.formatTerm reason
 type InternalMsg =
     | [<CompiledName("fable_actor_msg")>] ActorMsg of payload: obj
     | [<CompiledName("fable_actor_timer")>] ActorTimer of ref: obj * callback: (obj -> unit)
-    | [<CompiledName("EXIT")>] Exit of pid: Pid * reason: obj
+    | [<CompiledName("EXIT")>] Exit of pid: Pid<obj> * reason: obj
 
 // ============================================================================
 // Message passing
@@ -44,11 +44,11 @@ type InternalMsg =
 
 /// Send a tagged user message: Pid ! {fable_actor_msg, Msg}
 [<Emit("$0 ! {fable_actor_msg, $1}, ok")>]
-let sendMsg (pid: Pid) (msg: obj) : unit = nativeOnly
+let sendMsg (pid: Pid<'Msg>) (msg: 'Msg) : unit = nativeOnly
 
 /// Send a tagged reply: Pid ! {fable_actor_reply, Ref, Value}
 [<Emit("$0 ! {fable_actor_reply, $1, $2}, ok")>]
-let sendReply (pid: Pid) (ref: Ref) (value: obj) : unit = nativeOnly
+let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit = nativeOnly
 
 /// CPS receive: blocks until a user message arrives.
 /// Dispatches timer callbacks and EXIT signals transparently.
@@ -71,12 +71,12 @@ let rec receiveMsg (cont: obj -> unit) : unit =
 /// Blocking selective receive for a reply matching a specific ref.
 /// Uses emitErlExpr to preserve Erlang's bound-variable semantics —
 /// only the message with the matching ref is consumed from the mailbox.
-let recvReply (ref: Ref) : obj =
+let recvReply (ref: Ref<'Reply>) : 'Reply =
     emitErlExpr ref "receive {fable_actor_reply, $0, FableReply} -> FableReply end"
 
 /// Selective receive for a reply with timeout.
 /// Returns Some(reply) or None on timeout.
-let recvReplyWithTimeout (ref: Ref) (timeout: int) : obj option =
+let recvReplyWithTimeout (ref: Ref<'Reply>) (timeout: int) : 'Reply option =
     emitErlExpr (ref, timeout) "receive {fable_actor_reply, $0, FableReply} -> {some, FableReply} after $1 -> undefined end"
 
 // ============================================================================
@@ -93,14 +93,18 @@ let isChildExited (msg: obj) : bool = nativeOnly
 type private TimerControl = | [<CompiledName("cancel")>] Cancel
 
 /// Schedule a callback after ms milliseconds.
-/// Returns the timer process pid for cancellation.
-let timerSchedule (ms: int) (callback: unit -> unit) : Pid =
-    Erlang.spawn (fun () ->
-        match Erlang.receive<TimerControl> ms with
-        | Some Cancel -> ()
-        | None -> callback ())
+/// Returns the timer process pid (boxed) for cancellation.
+let timerSchedule (ms: int) (callback: unit -> unit) : obj =
+    let pid: Pid<TimerControl> =
+        Erlang.spawn (fun () ->
+            match Erlang.receive<TimerControl> ms with
+            | Some Cancel -> ()
+            | None -> callback ())
+
+    box pid
 
 /// Cancel a scheduled timer by sending the cancel atom to its process.
-let timerCancel (timer: Pid) : unit = Erlang.send timer (box Cancel)
+let timerCancel (timer: obj) : unit =
+    Erlang.send (unbox<Pid<TimerControl>> timer) Cancel
 
 #endif

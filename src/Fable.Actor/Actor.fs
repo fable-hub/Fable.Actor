@@ -24,14 +24,14 @@ open Fable.Actor.Platform
 type ActorOp<'T> = { Run: ('T -> unit) -> unit }
 
 type Actor<'Msg> = {
-    Pid: Pid
+    Pid: Pid<'Msg>
 } with
 
     member _.Receive() : ActorOp<'Msg> = {
         Run = fun cont -> receiveMsg (fun raw -> cont (unbox<'Msg> raw))
     }
 
-    member this.Post(msg: 'Msg) = sendMsg this.Pid (box msg)
+    member this.Post(msg: 'Msg) = sendMsg this.Pid msg
 
 type ActorBuilder() =
     member _.Bind(op: ActorOp<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
@@ -150,8 +150,8 @@ module Actor =
                     Reply = fun reply -> sendReply callerPid ref reply
                 }
 
-                sendMsg actor.Pid (box (msg, rc))
-                cont (unbox (recvReply ref))
+                sendMsg actor.Pid (msg, rc)
+                cont (recvReply ref)
     }
 
     /// Send a message and await a reply with a timeout in milliseconds.
@@ -166,10 +166,10 @@ module Actor =
                     Reply = fun reply -> sendReply callerPid ref reply
                 }
 
-                sendMsg actor.Pid (box (msg, rc))
+                sendMsg actor.Pid (msg, rc)
 
                 match recvReplyWithTimeout ref timeout with
-                | Some reply -> cont (unbox<'Reply> reply)
+                | Some reply -> cont reply
                 | None -> raise (System.TimeoutException("Actor call timed out"))
     }
 
@@ -407,11 +407,10 @@ module Actor =
 #if FABLE_COMPILER_BEAM
 
     /// Schedule a timer callback. Returns a typed handle for cancellation.
-    let schedule (ms: int) (callback: unit -> unit) : TimerHandle =
-        TimerHandle(box (timerSchedule ms callback))
+    let schedule (ms: int) (callback: unit -> unit) : TimerHandle = TimerHandle(timerSchedule ms callback)
 
     /// Cancel a scheduled timer.
-    let cancelTimer (TimerHandle handle: TimerHandle) : unit = timerCancel (unbox<Pid> handle)
+    let cancelTimer (TimerHandle handle: TimerHandle) : unit = timerCancel handle
 
 #else
 
@@ -437,7 +436,7 @@ module Actor =
 
     /// Extract the raw platform handle from an actor.
 #if FABLE_COMPILER_BEAM
-    let pid (actor: Actor<'Msg>) : Pid = actor.Pid
+    let pid (actor: Actor<'Msg>) : Pid<'Msg> = actor.Pid
 #else
     let pid (actor: Actor<'Msg>) : obj = actor.Pid
 #endif

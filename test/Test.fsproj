@@ -12,6 +12,6 @@
     <ProjectReference Include="../src/Fable.Actor/Fable.Actor.fsproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Fable.Core" Version="5.0.0-rc.1" />
+    <PackageReference Include="Fable.Core" Version="5.0.0" />
   </ItemGroup>
 </Project>
