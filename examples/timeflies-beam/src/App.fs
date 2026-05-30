@@ -2,9 +2,9 @@
 module FableActorTimefliesApp
 
 open Fable.Core
+open Fable.Beam
 open Fable.Beam.Application
 open Fable.Beam.Io
-open Fable.Beam.Erlang
 open Fable.Beam.Cowboy.Cowboy
 open Fable.Beam.Cowboy.CowboyRouter
 
@@ -25,17 +25,17 @@ let private protoOpts (dispatch: obj) : obj = nativeOnly
 let private transportOpts (port: int) : obj = nativeOnly
 
 let start () =
-    application.ensure_all_started (binaryToAtom "cowboy") |> ignore
+    application.ensure_all_started (Erlang.binaryToAtom "cowboy") |> ignore
 
     let dispatch =
         compile [
             hostRule [
-                route "/" (binaryToAtom "fable_actor_timeflies_http")
-                route "/ws" (binaryToAtom "fable_actor_timeflies_ws")
+                route "/" (Erlang.binaryToAtom "fable_actor_timeflies_http")
+                route "/ws" (Erlang.binaryToAtom "fable_actor_timeflies_ws")
             ]
         ]
 
-    startClear (binaryToAtom "timeflies_listener") (transportOpts 3000) (protoOpts dispatch)
+    startClear (Erlang.binaryToAtom "timeflies_listener") (transportOpts 3000) (protoOpts dispatch)
     |> ignore
 
     io.format ("Timeflies demo running at http://localhost:3000~n", [])

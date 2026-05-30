@@ -2,6 +2,7 @@
 module FableActorTimefliesHttp
 
 open Fable.Core
+open Fable.Beam.Maps
 open Fable.Beam.Cowboy.CowboyReq
 open Fable.Beam.Cowboy.CowboyHandler
 
@@ -123,7 +124,7 @@ let private html =
 
 /// Cowboy content-type header map
 [<Emit("#{<<\"content-type\">> => <<\"text/html\">>}")>]
-let private htmlHeaders: obj = nativeOnly
+let private htmlHeaders: BeamMap<string, string> = nativeOnly
 
 let init (req: Req) (state: obj) : obj =
     let req = reply 200 htmlHeaders html req

@@ -44,7 +44,7 @@ let mainAsync =
         frame.bind (
             "<Motion>",
             fun (ev: Event) ->
-                send distributor { Timeflies.X = ev.x; Timeflies.Y = ev.y }
+                Actor.send distributor { Timeflies.X = ev.x; Timeflies.Y = ev.y }
         )
         |> ignore
 

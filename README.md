@@ -68,6 +68,20 @@ let greeter = spawn (fun inbox ->
 send greeter "World"
 ```
 
+#### `spawn` vs `actor`
+
+If you know `MailboxProcessor`, the mapping is one-to-one:
+
+```fsharp
+MailboxProcessor.Start (fun inbox -> async { ... })   // MailboxProcessor
+spawn                  (fun inbox -> actor { ... })   // Fable.Actor
+```
+
+- **`spawn`** *launches* an actor — it starts a long-running process with a mailbox and returns an `Actor<'Msg>` handle. It is the equivalent of `MailboxProcessor.Start`. On .NET/Python/JS it wraps `MailboxProcessor.Start`; on BEAM it wraps `Erlang.spawn`.
+- **`actor { }`** *describes the body* — the receive loop you pass to `spawn`. It is the equivalent of `async { }`. On .NET/Python/JS it **is** `async` (`ActorOp<'T> = Async<'T>`, and every CE member delegates straight to the `async` builder); on BEAM it compiles to a CPS-based blocking receive instead, since the BEAM has no async runtime.
+
+In short: `actor` is to `spawn` what `async` is to `MailboxProcessor.Start`. The only reason `actor` exists rather than reusing `async` is BEAM — on the other three targets it's a transparent passthrough.
+
 ### Supervision
 
 `spawnSupervised` creates a child actor with a supervision strategy. When the child crashes, the strategy decides what to do: `Restart`, `Stop`, or `Escalate`.
