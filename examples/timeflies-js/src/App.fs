@@ -42,7 +42,7 @@ let App () =
         distributorRef.current <- Some distributor
 
         { new System.IDisposable with
-            member _.Dispose() = kill distributor })
+            member _.Dispose() = Actor.kill distributor })
 
     // Listen for mouse moves globally
     React.useEffectOnce (fun () ->
@@ -51,7 +51,7 @@ let App () =
 
             distributorRef.current
             |> Option.iter (fun d ->
-                send d { Timeflies.X = int me.clientX; Timeflies.Y = int me.clientY })
+                Actor.send d { Timeflies.X = int me.clientX; Timeflies.Y = int me.clientY })
 
         document.addEventListener ("mousemove", handler)
 
