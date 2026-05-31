@@ -1,7 +1,6 @@
 /// Cowboy HTTP handler that serves the timeflies HTML page.
 module FableActorTimefliesHttp
 
-open Fable.Core
 open Fable.Beam.Maps
 open Fable.Beam.Cowboy.CowboyReq
 open Fable.Beam.Cowboy.CowboyHandler
@@ -123,9 +122,9 @@ let private html =
 </html>"
 
 /// Cowboy content-type header map
-[<Emit("#{<<\"content-type\">> => <<\"text/html\">>}")>]
-let private htmlHeaders: BeamMap<string, string> = nativeOnly
+let private htmlHeaders: BeamMap<string, string> =
+    ofList [ ("content-type", "text/html") ]
 
-let init (req: Req) (state: obj) : obj =
+let init (req: Req) (state: 'State) : HandlerResult<'State> =
     let req = reply 200 htmlHeaders html req
     ok req state
