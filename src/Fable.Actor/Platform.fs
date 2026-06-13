@@ -23,7 +23,6 @@ let private atomNormal: Atom = Erlang.binaryToAtom "normal"
 // ============================================================================
 
 let killProcess (pid: Pid<'Msg>) : unit = Erlang.exitPid pid atomKill
-let exitNormal () : unit = Erlang.exit atomNormal
 let trapExits () : unit = Erlang.trapExit () |> ignore
 let formatReason (reason: obj) : string = Erlang.formatTerm reason
 
@@ -32,10 +31,11 @@ let formatReason (reason: obj) : string = Erlang.formatTerm reason
 // ============================================================================
 
 /// DU mapping the tagged-tuple envelope used on the wire.
-/// Each case's CompiledName matches the Erlang atom tag.
+/// Each case's CompiledName matches the Erlang atom tag, so a typed
+/// `Erlang.receive<InternalMsg>()` compiles to the selective receive
+/// `receive {fable_actor_msg, ...}; {'EXIT', ...} end`.
 type InternalMsg =
     | [<CompiledName("fable_actor_msg")>] ActorMsg of payload: obj
-    | [<CompiledName("fable_actor_timer")>] ActorTimer of ref: obj * callback: (obj -> unit)
     | [<CompiledName("EXIT")>] Exit of pid: Pid<obj> * reason: obj
 
 // ============================================================================
@@ -50,21 +50,11 @@ let sendMsg (pid: Pid<'Msg>) (msg: 'Msg) : unit = nativeOnly
 [<Emit("$0 ! {fable_actor_reply, $1, $2}, ok")>]
 let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit = nativeOnly
 
-/// CPS receive: blocks until a user message arrives.
-/// Dispatches timer callbacks and EXIT signals transparently.
-/// Uses emitErlExpr for the blocking receive to avoid overload resolution
-/// issues with Erlang.receive<'T>() vs Erlang.receive<'T>(timeout).
+/// CPS receive: blocks until a user message arrives, passing EXIT signals
+/// through transparently as ChildExited (a normal exit is ignored).
 let rec receiveMsg (cont: obj -> unit) : unit =
-    let msg: InternalMsg =
-        emitErlExpr
-            ()
-            "receive {fable_actor_msg, P__} -> {fable_actor_msg, P__}; {fable_actor_timer, R__, C__} -> {fable_actor_timer, R__, C__}; {'EXIT', P__, R__} -> {'EXIT', P__, R__} end"
-
-    match msg with
+    match Erlang.receive<InternalMsg> () with
     | ActorMsg payload -> cont payload
-    | ActorTimer(_, callback) ->
-        callback (box ())
-        receiveMsg cont
     | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
     | Exit(pid, reason) -> cont (box ({ Pid = box pid; Reason = reason }: ChildExited))
 
