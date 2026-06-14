@@ -92,10 +92,11 @@ type ActorBuilder() =
         this.Using(items.GetEnumerator(), fun enum -> this.While((fun () -> enum.MoveNext()), this.Delay(fun () -> body enum.Current)))
 
     /// Bridge an Async into the actor CE. On BEAM, Async is erased to synchronous
-    /// callbacks (there is no async scheduler — concurrency comes from actors), so
-    /// running it to completion via Async.RunSynchronously simply executes the
-    /// callback chain the async already is. This makes `do! someAsyncCall` work
-    /// inside actor { }. BEAM-only: on other targets ActorOp = Async natively.
+    /// callbacks (there is no async scheduler — concurrency comes from spawning
+    /// actors, and Async.Parallel, not from sequential Async), so running it to
+    /// completion via Async.RunSynchronously simply executes the callback chain the
+    /// async already is — inline in this process. This makes `do! someAsyncCall`
+    /// work inside actor { }. BEAM-only: on other targets ActorOp = Async natively.
     member _.Bind(op: Async<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
         Run = fun cont -> (f (Async.RunSynchronously op)).Run cont
     }
