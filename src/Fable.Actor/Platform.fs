@@ -36,25 +36,29 @@ let formatReason (reason: obj) : string = Erlang.formatTerm reason
 /// `receive {fable_actor_msg, ...}; {'EXIT', ...} end`.
 type InternalMsg =
     | [<CompiledName("fable_actor_msg")>] ActorMsg of payload: obj
+    | [<CompiledName("fable_actor_reply")>] Reply of ref: Ref<obj> * value: obj
     | [<CompiledName("EXIT")>] Exit of pid: Pid<obj> * reason: obj
 
 // ============================================================================
 // Message passing
 // ============================================================================
 
-/// Send a tagged user message: Pid ! {fable_actor_msg, Msg}
-[<Emit("$0 ! {fable_actor_msg, $1}, ok")>]
-let sendMsg (pid: Pid<'Msg>) (msg: 'Msg) : unit = nativeOnly
+/// Send a tagged user message: Pid ! {fable_actor_msg, Msg}.
+/// The envelope tag comes from InternalMsg.ActorMsg's CompiledName.
+let sendMsg (pid: Pid<'Msg>) (msg: 'Msg) : unit =
+    Erlang.send (unbox<Pid<InternalMsg>> pid) (ActorMsg(box msg))
 
-/// Send a tagged reply: Pid ! {fable_actor_reply, Ref, Value}
-[<Emit("$0 ! {fable_actor_reply, $1, $2}, ok")>]
-let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit = nativeOnly
+/// Send a tagged reply: Pid ! {fable_actor_reply, Ref, Value}.
+/// The envelope tag comes from InternalMsg.Reply's CompiledName.
+let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit =
+    Erlang.send (unbox<Pid<InternalMsg>> pid) (Reply(unbox<Ref<obj>> ref, box value))
 
 /// CPS receive: blocks until a user message arrives, passing EXIT signals
 /// through transparently as ChildExited (a normal exit is ignored).
 let rec receiveMsg (cont: obj -> unit) : unit =
     match Erlang.receive<InternalMsg> () with
     | ActorMsg payload -> cont payload
+    | Reply _ -> receiveMsg cont // stray reply (ref already timed out); drop and keep waiting
     | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
     | Exit(pid, reason) -> cont (box ({ Pid = box pid; Reason = reason }: ChildExited))
 
