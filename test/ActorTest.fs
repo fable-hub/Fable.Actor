@@ -743,6 +743,39 @@ let actor_async_bind_test () =
     }
 
 // ============================================================================
+// callAsync tests
+// ============================================================================
+
+/// callAsync awaits a reply as an Async, usable from inside an async { } block.
+/// This is the regression target for Fable.Reactive's mapActor: on BEAM, call is
+/// CPS and cannot be let!-bound in async { }, but callAsync can. The caller (this
+/// process) and server (a distinct process from Actor.start) must not deadlock.
+let actor_call_async_test () =
+    actor {
+        let server =
+            Actor.start 0 (fun count (msg, rc) ->
+                match msg with
+                | Increment -> Continue(count + 1)
+                | Decrement -> Continue(count - 1)
+                | GetCount ->
+                    rc.Reply count
+                    Continue count)
+
+        Actor.cast server Increment
+        Actor.cast server Increment
+        do! sleep 10
+
+        // The real regression: let! callAsync from inside an async { } block.
+        let! count =
+            async {
+                let! c = Actor.callAsync server GetCount
+                return c
+            }
+
+        shouldEqual 2 count
+    }
+
+// ============================================================================
 // kill tests
 // ============================================================================
 

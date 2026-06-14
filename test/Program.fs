@@ -66,6 +66,9 @@ let mainAsync =
         let! r26 = runTest "actor_try_finally_exn" actor_try_finally_exn_test
         let! r27 = runTest "actor_async_bind" actor_async_bind_test
 
+        // callAsync
+        let! r28 = runTest "actor_call_async" actor_call_async_test
+
         let results = [
             r1
             r2
@@ -94,6 +97,7 @@ let mainAsync =
             r25
             r26
             r27
+            r28
         ]
 
         let passed = results |> List.filter id |> List.length

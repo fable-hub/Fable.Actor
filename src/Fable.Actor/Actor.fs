@@ -206,6 +206,16 @@ module Actor =
                 cont (recvReply ref)
     }
 
+    /// Send a message and await a reply as an Async (usable from async { } contexts).
+    /// BEAM processes block natively, so the CPS Run continuation fires synchronously
+    /// once the reply arrives — capture it and return.
+    let callAsync (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : Async<'Reply> =
+        async {
+            let mutable result = Unchecked.defaultof<'Reply>
+            (call actor msg).Run(fun reply -> result <- reply)
+            return result
+        }
+
     /// Send a message and await a reply with a timeout in milliseconds.
     /// Raises TimeoutException if no reply is received within the timeout.
     let callWithTimeout (timeout: int) (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> = {
@@ -303,6 +313,10 @@ module Actor =
 
             return reply
         }
+
+    /// Send a message and await a reply as an Async (usable from async { } contexts).
+    /// On non-BEAM targets ActorOp = Async, so this is a direct alias for call.
+    let callAsync (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : Async<'Reply> = call target msg
 
     /// Send a message and await a reply with a timeout in milliseconds.
     /// Raises TimeoutException if no reply is received within the timeout.
