@@ -7,17 +7,6 @@ name: Fable.Actor
 
 All notable changes to this project will be documented in this file.
 
-## 5.0.0-rc.10 - 2026-06-14
-
-### 🚀 Features
-
-* Add `For`, `While`, `Using`, and `TryFinally` to the `actor { }` computation expression, so actor bodies can use `for … in` / `while` loops, `use` bindings, and `try/finally`. Implemented on both the BEAM (CPS) and non-BEAM (`async`-delegating) branches.
-* Bridge `Async` into `actor { }` on BEAM: `do!`/`let!` of an `Async<'T>` now works inside an actor body (runs synchronously via `Async.RunSynchronously`, which on BEAM is just the erased callback chain). Unblocks libraries like Fable.Reactive whose observer/disposable methods return `Async`.
-
-### 📝 Notes
-
-* BEAM `TryFinally` captures the body's result and runs the compensation before invoking the continuation, so cleanup happens when the body completes — not after subsequent steps. The compensation runs exactly once on both normal and exceptional exit. Downstream callers should note the bridged `Async` runs to completion synchronously on BEAM (concurrency comes from spawning actors, not from `Async`).
-
 ## 5.0.0-rc.9 - 2026-04-25
 
 ### 🏗️ Breaking changes
