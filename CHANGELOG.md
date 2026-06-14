@@ -1,11 +1,19 @@
 ---
-last_commit_released: 4aaed250ee7958515eec0750861338d90662649f
+last_commit_released: 24d58f510d96b66dbd46a31f0e67421504f27fb5
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.10 - 2026-06-14
+
+### 🚀 Features
+
+* Loop/resource CE members + Async bridge for actor { } (#30) ([0b5f660](https://github.com/fable-hub/Fable.Actor/commit/0b5f6604aa141e7ac43c5c06b79ed4e5d5b36d17))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/4aaed250ee7958515eec0750861338d90662649f..24d58f510d96b66dbd46a31f0e67421504f27fb5)</small></strong>
 
 ## 5.0.0-rc.9 - 2026-04-25
 
