@@ -1,11 +1,19 @@
 ---
-last_commit_released: 24d58f510d96b66dbd46a31f0e67421504f27fb5
+last_commit_released: a1b825245858e7324a7b5bbf9004180cd5e0f91c
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.11 - 2026-06-14
+
+### 🚀 Features
+
+* Add Actor.callAsync — request-reply returning Async<'Reply> (#32) ([a1b8252](https://github.com/fable-hub/Fable.Actor/commit/a1b825245858e7324a7b5bbf9004180cd5e0f91c))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/24d58f510d96b66dbd46a31f0e67421504f27fb5..a1b825245858e7324a7b5bbf9004180cd5e0f91c)</small></strong>
 
 ## 5.0.0-rc.10 - 2026-06-14
 
