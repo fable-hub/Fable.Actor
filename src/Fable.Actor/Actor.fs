@@ -56,6 +56,50 @@ type ActorBuilder() =
                     (handler ex).Run cont
     }
 
+    /// CPS try/finally. BEAM ops invoke their continuation synchronously, so we
+    /// capture the body's result via an inner continuation, run the compensation,
+    /// and only then call the outer continuation — otherwise the compensation
+    /// would run *after* the rest of the actor body, not when the body completes.
+    /// The compensation runs exactly once, on both normal and exceptional exit.
+    member _.TryFinally(body: ActorOp<'T>, compensation: unit -> unit) : ActorOp<'T> = {
+        Run =
+            fun cont ->
+                let mutable result = Unchecked.defaultof<'T>
+
+                (try
+                    body.Run(fun value -> result <- value)
+                 with _ ->
+                     compensation ()
+                     reraise ())
+
+                compensation ()
+                cont result
+    }
+
+    member this.Using(resource: 'a :> System.IDisposable, body: 'a -> ActorOp<'T>) : ActorOp<'T> =
+        this.TryFinally(body resource, (fun () -> resource.Dispose()))
+
+    member _.While(guard: unit -> bool, body: ActorOp<unit>) : ActorOp<unit> = {
+        Run =
+            fun cont ->
+                let rec loop () =
+                    if guard () then body.Run(fun () -> loop ()) else cont ()
+
+                loop ()
+    }
+
+    member this.For(items: seq<'T>, body: 'T -> ActorOp<unit>) : ActorOp<unit> =
+        this.Using(items.GetEnumerator(), fun enum -> this.While((fun () -> enum.MoveNext()), this.Delay(fun () -> body enum.Current)))
+
+    /// Bridge an Async into the actor CE. On BEAM, Async is erased to synchronous
+    /// callbacks (there is no async scheduler — concurrency comes from actors), so
+    /// running it to completion via Async.RunSynchronously simply executes the
+    /// callback chain the async already is. This makes `do! someAsyncCall` work
+    /// inside actor { }. BEAM-only: on other targets ActorOp = Async natively.
+    member _.Bind(op: Async<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
+        Run = fun cont -> (f (Async.RunSynchronously op)).Run cont
+    }
+
 #else
 
 // === Non-BEAM: MailboxProcessor-based ===
@@ -86,6 +130,13 @@ type ActorBuilder() =
         async.Combine(first, async.Delay(fun () -> second))
 
     member _.TryWith(body: Async<'T>, handler: exn -> Async<'T>) : Async<'T> = async.TryWith(body, handler)
+
+    member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> = async.TryFinally(body, compensation)
+
+    member _.Using(resource: 'a :> System.IDisposable, body: 'a -> Async<'T>) : Async<'T> = async.Using(resource, body)
+
+    member _.While(guard: unit -> bool, body: Async<unit>) : Async<unit> = async.While(guard, body)
+    member _.For(items: seq<'T>, body: 'T -> Async<unit>) : Async<unit> = async.For(items, body)
 
 #endif
 

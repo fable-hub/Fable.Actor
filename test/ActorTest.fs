@@ -12,8 +12,7 @@ open Fable.Actor.TestUtils
 /// An actor that does nothing should not crash.
 let actor_empty_test () =
     actor {
-        let _a: Actor<string> =
-            Actor.spawn (fun _inbox -> actor { return () })
+        let _a: Actor<string> = Actor.spawn (fun _inbox -> actor { return () })
 
         do! sleep 10
         shouldBeTrue true
@@ -293,9 +292,14 @@ let actor_schedule_test () =
                     rc.Reply count
                     Continue count)
 
-        Actor.schedule 10 (fun () -> Actor.cast ticker Tick) |> ignore
-        Actor.schedule 20 (fun () -> Actor.cast ticker Tick) |> ignore
-        Actor.schedule 30 (fun () -> Actor.cast ticker Tick) |> ignore
+        Actor.schedule 10 (fun () -> Actor.cast ticker Tick)
+        |> ignore
+
+        Actor.schedule 20 (fun () -> Actor.cast ticker Tick)
+        |> ignore
+
+        Actor.schedule 30 (fun () -> Actor.cast ticker Tick)
+        |> ignore
 
         do! sleep 100
 
@@ -352,7 +356,9 @@ let reporter initial =
     Actor.start initial (fun state (msg, rc) ->
         match msg with
         | Some v -> Continue v
-        | None -> rc.Reply state; Continue state)
+        | None ->
+            rc.Reply state
+            Continue state)
 
 /// spawnSupervised restarts a crashed child when strategy says Restart.
 let actor_supervised_restart_test () =
@@ -428,7 +434,9 @@ let actor_supervised_stop_test () =
                         match Actor.tryAsChildExited msg with
                         | Some exited ->
                             let restarted = Actor.handleChildExit inbox child exited
-                            if not restarted then Actor.cast flag (Some true)
+
+                            if not restarted then
+                                Actor.cast flag (Some true)
                         | None -> ()
 
                         return! loop ()
@@ -476,7 +484,9 @@ let actor_stop_abnormal_test () =
 
                         match Actor.tryAsChildExited msg with
                         | Some exited ->
-                            Actor.handleChildExit inbox stoppingChild exited |> ignore
+                            Actor.handleChildExit inbox stoppingChild exited
+                            |> ignore
+
                             Actor.cast flag (Some true)
                         | None -> ()
 
@@ -633,6 +643,103 @@ let actor_call_with_timeout_expires_test () =
             timedOut <- true
 
         shouldBeTrue timedOut
+    }
+
+// ============================================================================
+// computation-expression control-flow tests (for/while/use/try-finally)
+// ============================================================================
+
+/// A for..in loop over a list runs the body for each element, in order.
+let actor_for_loop_test () =
+    actor {
+        let mutable acc = []
+
+        for x in [ 1; 2; 3 ] do
+            do! sleep 1
+            acc <- acc @ [ x * 10 ]
+
+        shouldEqual [ 10; 20; 30 ] acc
+    }
+
+/// A while loop repeats the body until the guard is false.
+let actor_while_loop_test () =
+    actor {
+        let mutable i = 0
+        let mutable sum = 0
+
+        while i < 5 do
+            do! sleep 1
+            sum <- sum + i
+            i <- i + 1
+
+        shouldEqual 10 sum
+    }
+
+/// A use binding disposes the resource when the scope ends.
+let actor_use_dispose_test () =
+    actor {
+        let mutable disposed = false
+
+        do!
+            actor {
+                use _r =
+                    { new System.IDisposable with
+                        member _.Dispose() = disposed <- true
+                    }
+
+                do! sleep 1
+            }
+
+        shouldBeTrue disposed
+    }
+
+/// try/finally runs the compensation on normal completion.
+let actor_try_finally_normal_test () =
+    actor {
+        let mutable cleaned = false
+
+        do!
+            actor {
+                try
+                    do! sleep 1
+                finally
+                    cleaned <- true
+            }
+
+        shouldBeTrue cleaned
+    }
+
+/// try/finally runs the compensation when the body throws, and re-raises.
+let actor_try_finally_exn_test () =
+    actor {
+        let mutable cleaned = false
+        let mutable caught = false
+
+        try
+            do!
+                actor {
+                    try
+                        do! sleep 1
+                        failwith "boom"
+                    finally
+                        cleaned <- true
+                }
+        with _ ->
+            caught <- true
+
+        shouldBeTrue cleaned
+        shouldBeTrue caught
+    }
+
+/// do!/let! of an Async inside an actor body observably runs and yields a value.
+/// On BEAM this exercises the Async -> ActorOp bridge (Async.RunSynchronously).
+let actor_async_bind_test () =
+    actor {
+        let mutable ran = false
+        do! async { ran <- true }
+        let! v = async { return 42 }
+        shouldBeTrue ran
+        shouldEqual 42 v
     }
 
 // ============================================================================

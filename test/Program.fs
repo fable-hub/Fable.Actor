@@ -58,7 +58,44 @@ let mainAsync =
         // kill
         let! r21 = runTest "actor_kill" actor_kill_test
 
-        let results = [ r1; r2; r3; r4; r5; r6; r7; r8; r9; r10; r11; r12; r13; r14; r15; r16; r17; r18; r19; r20; r21 ]
+        // CE control flow (for/while/use/try-finally) + async bridge
+        let! r22 = runTest "actor_for_loop" actor_for_loop_test
+        let! r23 = runTest "actor_while_loop" actor_while_loop_test
+        let! r24 = runTest "actor_use_dispose" actor_use_dispose_test
+        let! r25 = runTest "actor_try_finally_normal" actor_try_finally_normal_test
+        let! r26 = runTest "actor_try_finally_exn" actor_try_finally_exn_test
+        let! r27 = runTest "actor_async_bind" actor_async_bind_test
+
+        let results = [
+            r1
+            r2
+            r3
+            r4
+            r5
+            r6
+            r7
+            r8
+            r9
+            r10
+            r11
+            r12
+            r13
+            r14
+            r15
+            r16
+            r17
+            r18
+            r19
+            r20
+            r21
+            r22
+            r23
+            r24
+            r25
+            r26
+            r27
+        ]
+
         let passed = results |> List.filter id |> List.length
         let total = results.Length
         printfn ""
