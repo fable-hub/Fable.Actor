@@ -65,11 +65,11 @@ let private supervisedTests =
         "spawnSupervised",
         [
             testAsync (
-                "OneForOne Restart restarts a crashed child",
+                "OneForOne Restart returns a replacement child that accepts messages",
                 fun _ ->
                     toAsync (
                         actor {
-                            let restarts = reporter 0
+                            let replacementReceived = reporter false
 
                             let _parent: Actor<obj> =
                                 Actor.spawn (fun inbox ->
@@ -84,6 +84,9 @@ let private supervisedTests =
                                                     if msg = "crash" then
                                                         failwith "intentional crash"
 
+                                                    if msg = "probe" then
+                                                        Actor.cast replacementReceived (Some true)
+
                                                     return! loop ()
                                                 }
 
@@ -91,24 +94,25 @@ let private supervisedTests =
 
                                     Actor.send child.Actor "crash"
 
-                                    let rec loop restartCount =
+                                    let rec loop current =
                                         actor {
                                             let! msg = inbox.Receive()
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                let restarted = Actor.handleChildExit inbox child exited
-                                                let newCount = if restarted then restartCount + 1 else restartCount
-                                                Actor.cast restarts (Some newCount)
-                                                return! loop newCount
-                                            | None -> return! loop restartCount
+                                                match Actor.handleChildExit inbox current exited with
+                                                | ChildExitResult.Restarted replacement ->
+                                                    Actor.send replacement.Actor "probe"
+                                                    return! loop replacement
+                                                | ChildExitResult.Stopped -> return ()
+                                            | None -> return! loop current
                                         }
 
-                                    loop 0)
+                                    loop child)
 
                             do! sleep 200
-                            let! count = Actor.call restarts None
-                            assertThat count (isGreaterOrEqual 1)
+                            let! received = Actor.call replacementReceived None
+                            assertThat received isTrue
                         }
                     )
             )
@@ -143,10 +147,9 @@ let private supervisedTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                let restarted = Actor.handleChildExit inbox child exited
-
-                                                if not restarted then
-                                                    Actor.cast flag (Some true)
+                                                match Actor.handleChildExit inbox child exited with
+                                                | ChildExitResult.Stopped -> Actor.cast flag (Some true)
+                                                | ChildExitResult.Restarted _ -> ()
                                             | None -> ()
 
                                             return! loop ()

@@ -158,14 +158,22 @@ type ActorBuilder() =
 
 /// A supervised child with the information required to restart it.
 ///
-/// decision: retains the body and mutates the public actor handle so callers can follow restarts through one value
-/// invariant: Actor refers to the latest child after handleChildExit returns true
-/// tradeoff: the stable wrapper contains mutable state to keep the restarted actor address current
+/// decision: retains the body and strategy in an immutable value so restart state is portable across targets
 type SupervisedChild<'ParentMsg, 'Msg> = {
-    mutable Actor: Actor<'Msg>
+    Actor: Actor<'Msg>
     Body: Actor<'Msg> -> ActorOp<unit>
     Strategy: Strategy
 }
+
+/// Result of applying a supervision strategy to a child exit.
+///
+/// decision: returns the replacement explicitly because mutable record updates do not preserve it on every target
+/// invariant: Restarted contains the child that accepts messages after the failed generation exits
+/// tradeoff: callers replace their current supervised value after every restart
+[<RequireQualifiedAccess>]
+type ChildExitResult<'ParentMsg, 'Msg> =
+    | Restarted of SupervisedChild<'ParentMsg, 'Msg>
+    | Stopped
 
 [<AutoOpen>]
 module ActorCE =
@@ -418,12 +426,16 @@ module Actor =
         }
 
     /// Handle a ChildExited event for a supervised child.
-    /// Returns true if the child was restarted and false if it was stopped.
+    /// Returns the replacement child if restarted, or Stopped.
     /// Raises ProcessExitException if Escalate.
     ///
     /// assumption: exited belongs to supervised — this function does not compare their process identifiers
-    /// invariant: Restart replaces supervised.Actor before returning true
-    let handleChildExit (parent: Actor<'ParentMsg>) (supervised: SupervisedChild<'ParentMsg, 'Msg>) (exited: ChildExited) : bool =
+    /// invariant: Restart returns the new actor handle instead of relying on target-specific record mutation
+    let handleChildExit
+        (parent: Actor<'ParentMsg>)
+        (supervised: SupervisedChild<'ParentMsg, 'Msg>)
+        (exited: ChildExited)
+        : ChildExitResult<'ParentMsg, 'Msg> =
         let (OneForOne decider) = supervised.Strategy
 
         let ex =
@@ -432,12 +444,11 @@ module Actor =
             | r -> ProcessExitException(sprintf "%A" r)
 
         match decider ex with
-        | Directive.Stop -> false
+        | Directive.Stop -> ChildExitResult.Stopped
         | Directive.Escalate -> raise ex
         | Directive.Restart ->
             let newChild = spawnLinked parent supervised.Body
-            supervised.Actor <- newChild
-            true
+            ChildExitResult.Restarted { supervised with Actor = newChild }
 
 #else
 
@@ -462,12 +473,16 @@ module Actor =
         }
 
     /// Handle a ChildExited event for a supervised child.
-    /// Returns true if the child was restarted and false if it was stopped.
+    /// Returns the replacement child if restarted, or Stopped.
     /// Raises ProcessExitException if Escalate.
     ///
     /// assumption: exited belongs to supervised — this function does not compare their process identifiers
-    /// invariant: Restart replaces supervised.Actor before returning true
-    let handleChildExit (parent: Actor<'ParentMsg>) (supervised: SupervisedChild<'ParentMsg, 'Msg>) (exited: ChildExited) : bool =
+    /// invariant: Restart returns the new actor handle instead of relying on target-specific record mutation
+    let handleChildExit
+        (parent: Actor<'ParentMsg>)
+        (supervised: SupervisedChild<'ParentMsg, 'Msg>)
+        (exited: ChildExited)
+        : ChildExitResult<'ParentMsg, 'Msg> =
         let (OneForOne decider) = supervised.Strategy
 
         let ex =
@@ -476,12 +491,11 @@ module Actor =
             | r -> ProcessExitException(sprintf "%A" r)
 
         match decider ex with
-        | Directive.Stop -> false
+        | Directive.Stop -> ChildExitResult.Stopped
         | Directive.Escalate -> raise ex
         | Directive.Restart ->
             let newChild = spawnLinked parent supervised.Body
-            supervised.Actor <- newChild
-            true
+            ChildExitResult.Restarted { supervised with Actor = newChild }
 
 #endif
 
