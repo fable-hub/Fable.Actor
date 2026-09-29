@@ -1,11 +1,19 @@
 ---
-last_commit_released: a1b825245858e7324a7b5bbf9004180cd5e0f91c
+last_commit_released: 285d9dc004ca012118acf770658ac875cbb6d866
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.12 - 2026-09-29
+
+### 🏗️ Breaking changes
+
+* Return supervised replacement child (#59) ([285d9dc](https://github.com/fable-hub/Fable.Actor/commit/285d9dc004ca012118acf770658ac875cbb6d866))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/a1b825245858e7324a7b5bbf9004180cd5e0f91c..285d9dc004ca012118acf770658ac875cbb6d866)</small></strong>
 
 ## 5.0.0-rc.11 - 2026-06-14
 
