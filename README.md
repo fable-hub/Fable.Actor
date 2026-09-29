@@ -112,17 +112,18 @@ let supervisor = spawn (fun inbox ->
     // Send messages directly to the child
     send child.Actor "work"
 
-    let rec loop () = actor {
+    let rec loop currentChild = actor {
         let! msg = inbox.Receive()
         match tryAsChildExited msg with
         | Some exited ->
-            let restarted = handleChildExit inbox child exited
-            if not restarted then
+            match handleChildExit inbox currentChild exited with
+            | ChildExitResult.Restarted replacement ->
+                return! loop replacement
+            | ChildExitResult.Stopped ->
                 printfn "Child stopped permanently"
-        | None -> ()
-        return! loop ()
+        | None -> return! loop currentChild
     }
-    loop ())
+    loop child)
 ```
 
 For lower-level control, `spawnLinked` + `trapExits` gives you raw EXIT signals without automatic restart.
@@ -169,7 +170,7 @@ On non-BEAM targets, `Actor<'Msg>` is a thin wrapper around `MailboxProcessor<'M
 | `spawn body`                               | Spawn an actor: `spawn (fun inbox -> actor { ... })` |
 | `spawnLinked parent body`                  | Spawn a linked child actor (EXIT on crash)           |
 | `spawnSupervised parent strategy body`     | Spawn a child with supervision (auto-restart)        |
-| `handleChildExit parent supervised exited` | Apply strategy to a crashed child                    |
+| `handleChildExit parent supervised exited` | Return a replacement child or `Stopped`             |
 | `tryAsChildExited msg`                     | Check if a message is a `ChildExited` notification   |
 | `start state handler`                      | Stateful actor with message handler loop             |
 | `send actor msg`                           | Fire-and-forget message send                         |
