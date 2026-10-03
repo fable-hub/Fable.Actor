@@ -22,6 +22,50 @@ module internal Lifetime =
     let synchronize gate action = lock gate action
 #endif
 
+    let withContext body : Async<'T> =
+#if FABLE_COMPILER_PYTHON
+        Platform.fromContext body
+#else
+        async {
+            let! token = Async.CancellationToken
+            return! Async.FromContinuations(fun continuations -> body (continuations, token))
+        }
+#endif
+
+    let guard (expression: unit -> Async<'T>) : Async<'T> =
+#if FABLE_COMPILER_PYTHON
+        withContext (fun ((ok, error, cancelled), token) ->
+            let gate = newGate ()
+            let mutable finished = false
+
+            let finish next value =
+                let run =
+                    synchronize gate (fun () ->
+                        if finished then
+                            false
+                        else
+                            finished <- true
+                            true)
+
+                if run then
+                    next value
+
+            if token.IsCancellationRequested then
+                finish cancelled (OperationCanceledException())
+            else
+                let operation =
+                    try
+                        Choice1Of2(expression ())
+                    with ex ->
+                        Choice2Of2 ex
+
+                match operation with
+                | Choice2Of2 ex -> finish error ex
+                | Choice1Of2 op -> Async.StartWithContinuations(op, finish ok, finish error, finish cancelled, token))
+#else
+        async.Delay expression
+#endif
+
     let disposable f = {
         new IDisposable with
             member _.Dispose() = f ()
@@ -116,8 +160,7 @@ module internal Lifetime =
 /// invariant: terminal publication follows workflow exit and all owned child exits
 /// invariant: cancellation and lifecycle cleanup run at most once per generation
 /// tradeoff: cooperative user work can outlive a cleanup deadline and remains owned until it exits
-[<System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)>]
-type ActorLifetime internal (cts: CancellationTokenSource) =
+type internal ActorLifetime(cts: CancellationTokenSource) =
     let gate = Lifetime.newGate ()
     let mutable stopping = false
     let mutable cancelling = false
@@ -126,12 +169,20 @@ type ActorLifetime internal (cts: CancellationTokenSource) =
     let mutable result: ActorExit option = None
     let mutable failure: exn option = None
     let observers = System.Collections.Generic.Dictionary<int, ActorExit -> unit>()
+
+    let terminationObservers =
+        System.Collections.Generic.Dictionary<int, ActorExit -> unit>()
+
+    let mutable termination: ActorExit option = None
     let children = System.Collections.Generic.Dictionary<int, ActorLifetime>()
     let resources = ResizeArray<IDisposable>()
     let mutable nextId = 0
 
     member _.IsStopping = Lifetime.synchronize gate (fun () -> stopping)
-    member _.ObserverCount = Lifetime.synchronize gate (fun () -> observers.Count)
+
+    member _.ObserverCount =
+        Lifetime.synchronize gate (fun () -> observers.Count + terminationObservers.Count)
+
     member _.ChildCount = Lifetime.synchronize gate (fun () -> children.Count)
 
     member private _.RecordFailure(ex: exn) =
@@ -191,6 +242,29 @@ type ActorLifetime internal (cts: CancellationTokenSource) =
         terminal |> Option.iter callback
         Lifetime.disposable (fun () -> Lifetime.synchronize gate (fun () -> observers.Remove id |> ignore))
 
+    // invariant: delivery and admission closure are serialized so Post cannot race mailbox disposal
+    member _.Post(deliver: unit -> unit) =
+        Lifetime.synchronize gate (fun () ->
+            if not stopping then
+                deliver ())
+
+    /// Observe closure of request admission, independently of descendant cleanup.
+    ///
+    /// decision: settles calls on stop request because cooperative work can otherwise retain them beyond shutdown
+    member _.ObserveTermination(callback: ActorExit -> unit) =
+        let id, terminal =
+            Lifetime.synchronize gate (fun () ->
+                nextId <- nextId + 1
+
+                match termination with
+                | Some exit -> nextId, Some exit
+                | None ->
+                    terminationObservers.Add(nextId, callback)
+                    nextId, None)
+
+        terminal |> Option.iter callback
+        Lifetime.disposable (fun () -> Lifetime.synchronize gate (fun () -> terminationObservers.Remove id |> ignore))
+
     member this.RequestStop() =
         let owned =
             Lifetime.synchronize gate (fun () ->
@@ -199,11 +273,18 @@ type ActorLifetime internal (cts: CancellationTokenSource) =
                 else
                     stopping <- true
                     cancelling <- true
-                    Some(children.Values |> Seq.toArray))
+                    let exit = defaultArg bodyExit ActorExit.Cancelled
+                    termination <- Some exit
+                    let callbacks = terminationObservers.Values |> Seq.toArray
+                    terminationObservers.Clear()
+                    Some(children.Values |> Seq.toArray, exit, callbacks))
 
         match owned with
         | None -> ()
-        | Some owned ->
+        | Some(owned, exit, callbacks) ->
+            for callback in callbacks do
+                callback exit
+
             for child in owned do
                 child.RequestStop()
 

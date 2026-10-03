@@ -10,6 +10,7 @@
     <Description>Cross-platform actor library for F# compiled via Fable to BEAM, Python, and JavaScript</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="Platform.fs" />
     <Compile Include="Lifecycle.fs" />

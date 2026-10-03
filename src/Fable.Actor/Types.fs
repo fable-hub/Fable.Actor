@@ -43,6 +43,16 @@ type StopResult =
     | Completed of ActorExit
     | TimedOut
 
+/// Settlement of one request. Timeout and cancellation do not retract a delivered message.
+[<RequireQualifiedAccess>]
+type CallResult<'Reply> =
+    | Reply of 'Reply
+    | TimedOut
+    | TargetTerminated of ActorExit
+    | Cancelled
+
+exception TargetTerminatedException of ActorExit
+
 exception ProcessExitException of string
 
 /// What the supervisor should do when a child crashes.

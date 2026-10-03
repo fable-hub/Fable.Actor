@@ -12,6 +12,7 @@
     <Compile Include="SupervisionTests.fs" />
     <Compile Include="BuilderTests.fs" />
     <Compile Include="LifecycleTests.fs" />
+    <Compile Include="CallLivenessTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>

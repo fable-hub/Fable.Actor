@@ -18,4 +18,5 @@ let main _ =
         SupervisionTests.tests
         BuilderTests.tests
         LifecycleTests.tests
+        CallLivenessTests.tests
     ]

@@ -115,7 +115,7 @@ type ActorBuilder() =
 // === Non-BEAM: MailboxProcessor-based ===
 
 // decision: aliases actor operations to Async so existing Fable runtimes provide scheduling and cancellation
-// invariant: ActorBuilder delegates control-flow semantics to the standard async builder on non-BEAM targets
+// decision: guards actor binders and finalizers where portable Async cancellation differs from the owned lifecycle contract
 
 type ActorOp<'T> = Async<'T>
 
@@ -142,16 +142,21 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     /// Queue a message while the actor accepts work.
     ///
     /// invariant: posting after cancellation or workflow exit is a no-op
-    member _.Post(msg: 'Msg) =
-        if not lifetime.IsStopping then
-            mb.Post msg
+    member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
-    member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> = async.Bind(op, f)
+    // decision: delays user binders so a cancelled portable continuation cannot execute user code before its next token check
+    member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
+        async.Bind(op, fun value -> Lifetime.guard (fun () -> f value))
+
     member _.Return(value: 'T) : Async<'T> = async.Return(value)
     member _.ReturnFrom(op: Async<'T>) : Async<'T> = async.ReturnFrom(op)
     member _.Zero() : Async<unit> = async.Zero()
-    member _.Delay(f: unit -> Async<'T>) : Async<'T> = async.Delay(f)
+
+    /// Guard the user expression even on runtimes whose cancellation callback falls through into computation code.
+    ///
+    /// invariant: an already cancelled actor continuation does not evaluate its delayed user expression
+    member _.Delay(f: unit -> Async<'T>) : Async<'T> = Lifetime.guard f
 
     member _.Combine(first: Async<unit>, second: Async<'T>) : Async<'T> =
         async.Combine(first, async.Delay(fun () -> second))
@@ -162,25 +167,36 @@ type ActorBuilder() =
     ///
     /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
     member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
-        async {
-            let! token = Async.CancellationToken
+        Lifetime.withContext (fun ((ok, error, cancelled), token) ->
+            let gate = Lifetime.newGate ()
+            let mutable finished = false
 
-            return!
-                Async.FromContinuations(fun (ok, error, cancelled) ->
-                    let finish next value =
-                        let failure =
-                            try
-                                compensation ()
-                                None
-                            with ex ->
-                                Some ex
+            let finish next value =
+                // invariant: a duplicate terminal callback from a supplied Async cannot repeat actor cleanup
+                let run =
+                    Lifetime.synchronize gate (fun () ->
+                        if finished then
+                            false
+                        else
+                            finished <- true
+                            true)
 
-                        match failure with
-                        | Some ex -> error ex
-                        | None -> next value
+                if run then
+                    let failure =
+                        try
+                            compensation ()
+                            None
+                        with ex ->
+                            Some ex
 
-                    Async.StartWithContinuations(body, finish ok, finish error, finish cancelled, token))
-        }
+                    match failure with
+                    | Some ex -> error ex
+                    | None -> next value
+
+            if token.IsCancellationRequested then
+                finish cancelled (System.OperationCanceledException())
+            else
+                Async.StartWithContinuations(body, finish ok, finish error, finish cancelled, token))
 
     member this.Using(resource: 'a :> System.IDisposable, body: 'a -> Async<'T>) : Async<'T> =
         this.TryFinally(
@@ -303,55 +319,150 @@ module Actor =
     /// Format a crash reason as a string.
     let formatReason (reason: obj) : string = Platform.formatReason reason
 
-    /// Send a message and await a reply (inside actor { }).
+    /// Monitored call with a revocable reply destination.
     ///
-    /// decision: correlates every call with a fresh Erlang ref so concurrent replies cannot be confused
-    /// invariant: waiting for this call consumes only the reply carrying its ref
-    let call (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> = {
+    /// decision: uses a process alias so late replies are dropped before entering the caller mailbox
+    /// invariant: every settlement removes its alias, monitor, and any already queued duplicate replies
+    /// tradeoff: checks explicit caller cancellation in receive slices of at most 5 ms without a per-call helper process
+    let private callCore
+        timeout
+        (token: System.Threading.CancellationToken)
+        (ambient: System.Threading.CancellationToken)
+        (target: Actor<'Msg * ReplyChannel<'Reply>>)
+        msg
+        : ActorOp<CallResult<'Reply>> = {
         Run =
             fun cont ->
-                let ref = Erlang.makeRef ()
-                let callerPid = Erlang.self ()
+                let alias, monitor = beginCall target.Pid
 
-                let rc: ReplyChannel<'Reply> = {
-                    Reply = fun reply -> sendReply callerPid ref reply
-                }
+                let result =
+                    try
+                        let expires =
+                            timeout
+                            |> Option.map (fun ms -> monotonicMilliseconds () + int64 ms)
 
-                sendMsg actor.Pid (msg, rc)
-                cont (recvReply ref)
+                        let rec wait () =
+                            if
+                                ambient.IsCancellationRequested
+                                || token.IsCancellationRequested
+                            then
+                                CallResult.Cancelled
+                            else
+                                let remaining =
+                                    expires
+                                    |> Option.map (fun value -> value - monotonicMilliseconds ())
+
+                                match remaining with
+                                | Some ms when ms <= 0L -> CallResult.TimedOut
+                                | _ ->
+                                    let slice =
+                                        remaining
+                                        |> Option.map (fun ms -> min 5 (int ms))
+                                        |> Option.defaultValue 5
+
+                                    match recvCall alias monitor slice with
+                                    | 0, value -> CallResult.Reply(unbox value)
+                                    | 1, reason -> CallResult.TargetTerminated(exitReason reason)
+                                    | _ -> wait ()
+
+                        if
+                            ambient.IsCancellationRequested
+                            || token.IsCancellationRequested
+                        then
+                            CallResult.Cancelled
+                        else
+                            sendMsg
+                                target.Pid
+                                (msg,
+                                 {
+                                     Reply = fun value -> sendAliasReply alias value
+                                 })
+
+                            wait ()
+                    finally
+                        endCall alias monitor
+
+                cont result
     }
 
-    /// Send a message and await a reply as an Async (usable from async expressions).
-    ///
-    /// decision: captures the synchronous CPS result to bridge ActorOp back into shared Async-based APIs
-    /// assumption: call invokes its continuation synchronously after the blocking BEAM receive completes
-    let callAsync (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : Async<'Reply> =
+    let private replyOrRaise =
+        function
+        | CallResult.Reply value -> value
+        | CallResult.TimedOut -> raise (System.TimeoutException("Actor call timed out"))
+        | CallResult.TargetTerminated exit -> raise (TargetTerminatedException exit)
+        | CallResult.Cancelled -> raise (System.OperationCanceledException())
+
+    /// Await one request with a positive reply deadline and explicit caller lifetime.
+    let callResult deadline token target msg : ActorOp<CallResult<'Reply>> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        callCore (Some deadline) token System.Threading.CancellationToken.None target msg
+
+    let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
         async {
-            let mutable result = Unchecked.defaultof<'Reply>
-            (call actor msg).Run(fun reply -> result <- reply)
-            return result
+            let! ambient = Async.CancellationToken
+
+            return!
+                Async.FromContinuations(fun (ok, error, cancelled) ->
+                    let mutable result = CallResult.TimedOut
+
+                    let failure =
+                        try
+                            (callCore timeout token ambient target msg).Run(fun value -> result <- value)
+                            None
+                        with ex ->
+                            Some ex
+
+                    match failure with
+                    | Some ex -> error ex
+                    | None ->
+                        match result with
+                        | CallResult.Cancelled when ambient.IsCancellationRequested -> cancelled (System.OperationCanceledException())
+                        | _ -> ok result)
         }
 
-    /// Send a message and await a reply with a timeout in milliseconds.
-    /// Raises TimeoutException if no reply is received within the timeout.
-    ///
-    /// invariant: the selective receive leaves unrelated mailbox messages untouched
-    let callWithTimeout (timeout: int) (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> = {
+    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        callCoreAsync (Some deadline) token target msg
+
+    /// Await a reply without a reply deadline, preserving rc.11's default. Native target death settles the wait.
+    let call target msg : ActorOp<'Reply> = {
         Run =
             fun cont ->
-                let ref = Erlang.makeRef ()
-                let callerPid = Erlang.self ()
-
-                let rc: ReplyChannel<'Reply> = {
-                    Reply = fun reply -> sendReply callerPid ref reply
-                }
-
-                sendMsg actor.Pid (msg, rc)
-
-                match recvReplyWithTimeout ref timeout with
-                | Some reply -> cont reply
-                | None -> raise (System.TimeoutException("Actor call timed out"))
+                (callCore None System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
+                    .Run(fun result -> cont (replyOrRaise result))
     }
+
+    let callAsync target msg : Async<'Reply> =
+        async {
+            let! result = callCoreAsync None System.Threading.CancellationToken.None target msg
+            return replyOrRaise result
+        }
+
+    let callWithTimeout deadline target msg : ActorOp<'Reply> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        {
+            Run =
+                fun cont ->
+                    (callCore (Some deadline) System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
+                        .Run(fun result -> cont (replyOrRaise result))
+        }
+
+    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        async {
+            let! result =
+                callCoreAsync (Some deadline) System.Threading.CancellationToken.None target msg
+
+            return replyOrRaise result
+        }
 
     /// Receive next message (free function).
     let receive<'Msg> () : ActorOp<'Msg> = {
@@ -379,7 +490,7 @@ module Actor =
         attach inbox
 
         Async.StartWithContinuations(
-            async { do! body inbox },
+            Lifetime.guard (fun () -> body inbox),
             (fun () -> lifetime.Complete ActorExit.Normal),
             (fun ex -> lifetime.Complete(ActorExit.Failed ex)),
             (fun _ -> lifetime.Complete ActorExit.Cancelled),
@@ -425,22 +536,18 @@ module Actor =
         if cleanupDeadline <= 0 then
             invalidArg "cleanupDeadline" "Cleanup deadline must be positive"
 
-        async {
-            let! token = Async.CancellationToken
+        Lifetime.guard (fun () ->
+            Lifetime.withContext (fun ((ok, _, cancelled), token) ->
+                let pending =
+                    Lifetime.Pending(fun result ->
+                        match result with
+                        | Choice1Of2 value -> ok value
+                        | Choice2Of2 ex -> cancelled ex)
 
-            return!
-                Async.FromContinuations(fun (ok, _, cancelled) ->
-                    let pending =
-                        Lifetime.Pending(fun result ->
-                            match result with
-                            | Choice1Of2 value -> ok value
-                            | Choice2Of2 ex -> cancelled ex)
-
-                    pending.Add(Lifetime.cancellation token (fun () -> pending.Settle(Choice2Of2(System.OperationCanceledException()))))
-                    pending.Add(Lifetime.deadline cleanupDeadline (fun () -> pending.Settle(Choice1Of2 StopResult.TimedOut)))
-                    pending.Add(target.Lifetime.Observe(fun exit -> pending.Settle(Choice1Of2(StopResult.Completed exit))))
-                    target.Lifetime.RequestStop())
-        }
+                pending.Add(Lifetime.cancellation token (fun () -> pending.Settle(Choice2Of2(System.OperationCanceledException()))))
+                pending.Add(Lifetime.deadline cleanupDeadline (fun () -> pending.Settle(Choice1Of2 StopResult.TimedOut)))
+                pending.Add(target.Lifetime.Observe(fun exit -> pending.Settle(Choice1Of2(StopResult.Completed exit))))
+                target.Lifetime.RequestStop()))
 
     let stopAsync cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
 
@@ -449,44 +556,81 @@ module Actor =
     /// decision: remains a no-op because spawnLinked already converts non-BEAM child crashes into messages
     let trapExits () : unit = ()
 
-    /// Send a message and await a reply (inside actor { }).
-    let call (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> =
-        actor {
-            let! reply =
-                target.Mb.PostAndAsyncReply(fun rc -> (msg, { Reply = fun r -> rc.Reply(r) }))
-
-            return reply
-        }
-
-    /// Send a message and await a reply as an Async (usable from async { } contexts).
-    /// On non-BEAM targets ActorOp = Async, so this is a direct alias for call.
-    let callAsync (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : Async<'Reply> = call target msg
-
-    /// Send a message and await a reply with a timeout in milliseconds.
-    /// Raises TimeoutException if no reply is received within the timeout.
+    /// One per-call settlement owns its reply callback, admission observer, timer, and caller registrations.
     ///
-    /// decision: polls a ReplyChannel every 5 ms because the portable path cannot use MailboxProcessor timeout overloads
-    /// tradeoff: timeout detection can lag by one polling interval to keep one implementation for .NET, Python, and JS
-    let callWithTimeout (timeout: int) (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> =
-        let mutable result: 'Reply option = None
-        let rc: ReplyChannel<'Reply> = { Reply = fun r -> result <- Some r }
-        target.Post((msg, rc))
+    /// invariant: each delivered request has one reply destination and settles at most once without retries
+    /// invariant: a settled late-reply callback retains no caller continuation or reply value
+    let private callCore
+        timeout
+        (token: System.Threading.CancellationToken)
+        (target: Actor<'Msg * ReplyChannel<'Reply>>)
+        msg
+        : Async<CallResult<'Reply>> =
+        Lifetime.withContext (fun ((ok, _, cancelled), ambient) ->
+            let pending =
+                Lifetime.Pending(fun result ->
+                    match result with
+                    | Choice1Of2 value -> ok value
+                    | Choice2Of2 ex -> cancelled ex)
 
-        let step = 5
+            let settle result = pending.Settle(Choice1Of2 result)
+            pending.Add(Lifetime.cancellation ambient (fun () -> pending.Settle(Choice2Of2(System.OperationCanceledException()))))
+            pending.Add(Lifetime.cancellation token (fun () -> settle CallResult.Cancelled))
 
-        let rec wait elapsed =
-            actor {
-                match result with
-                | Some r -> return r
-                | None ->
-                    if elapsed >= timeout then
-                        raise (System.TimeoutException("Actor call timed out"))
+            timeout
+            |> Option.iter (fun ms -> pending.Add(Lifetime.deadline ms (fun () -> settle CallResult.TimedOut)))
 
-                    do! Async.Sleep step
-                    return! wait (elapsed + step)
-            }
+            pending.Add(target.Lifetime.ObserveTermination(fun exit -> settle (CallResult.TargetTerminated exit)))
 
-        wait 0
+            if not pending.IsCompleted then
+                target.Post(
+                    msg,
+                    {
+                        Reply = fun value -> settle (CallResult.Reply value)
+                    }
+                ))
+
+    /// Await one request with a positive reply deadline and explicit caller lifetime.
+    /// Timeout or cancellation does not undo processing. Stop closes request admission and settles outstanding waits.
+    let callResult deadline token target msg : ActorOp<CallResult<'Reply>> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        callCore (Some deadline) token target msg
+
+    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> = callResult deadline token target msg
+
+    let private replyOrRaise =
+        function
+        | CallResult.Reply value -> value
+        | CallResult.TimedOut -> raise (System.TimeoutException("Actor call timed out"))
+        | CallResult.TargetTerminated exit -> raise (TargetTerminatedException exit)
+        | CallResult.Cancelled -> raise (System.OperationCanceledException())
+
+    /// Await a reply without a reply deadline, preserving rc.11's default. Target shutdown and caller cancellation settle the wait.
+    let call target msg : ActorOp<'Reply> =
+        Lifetime.guard (fun () ->
+            async {
+                let! result = callCore None System.Threading.CancellationToken.None target msg
+                return replyOrRaise result
+            })
+
+    let callAsync target msg : Async<'Reply> = call target msg
+
+    /// Await a reply within a positive deadline; raises on timeout, target termination, or cancellation.
+    let callWithTimeout deadline target msg : ActorOp<'Reply> =
+        if deadline <= 0 then
+            invalidArg "deadline" "Reply deadline must be positive"
+
+        Lifetime.guard (fun () ->
+            async {
+                let! result =
+                    callCore (Some deadline) System.Threading.CancellationToken.None target msg
+
+                return replyOrRaise result
+            })
+
+    let callAsyncWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
 
     /// Receive next message (free function, for backwards compatibility).
     let receive<'Msg> (inbox: Actor<'Msg>) : Async<'Msg> = inbox.Receive()

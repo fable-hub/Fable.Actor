@@ -255,3 +255,57 @@ children on normal parent exit. Keep replacement children returned by
 generation. Actor handles on emulated targets are now constructed by spawn APIs
 rather than public record literals; Mb and Cts remain available for existing
 interop, but lifecycle operations must go through Actor APIs.
+
+## Bounded calls and subscription disposal
+
+`Actor.callResult replyDeadline cancellationToken actor message` returns
+`CallResult.Reply value`, `TimedOut`, `TargetTerminated exit`, or `Cancelled`.
+`callResultAsync` provides the same protocol from an Async expression.
+`callWithTimeout` and the new `callAsyncWithTimeout` return the reply directly;
+they raise `TimeoutException`, `TargetTerminatedException`, or cancellation on
+failure. Deadlines are positive milliseconds, validated before request delivery.
+
+`call` and `callAsync` retain rc.11's unbounded reply deadline. They now settle
+on target shutdown/death and ambient caller cancellation instead of hanging on
+those paths. The timeout APIs now deliver requests when the operation runs,
+rather than when an emulated call operation is merely constructed.
+
+On emulated targets, shutdown closes admission and settles pending calls at the
+stop request, even if noncooperative work has not exited yet. The reported reason
+is `Cancelled` in that case; normal workflow completion and crashes report their
+observed reason when they close admission. This notification is not confirmation
+of completed cleanup: await `stop` for that guarantee. On BEAM, monitors observe
+actual process death. A call to an already dead PID reports the native `noproc`
+reason, not its historical exit reason. Native stop likewise confirms death but
+does not retain a previous exit reason; it reports `Completed Cancelled` for the
+issued kill operation.
+
+A call settles once and detaches its timer, target observer/monitor, and caller
+registrations. BEAM aliases revoke the reply destination and flush queued
+matching replies; subsequent late replies never enter the mailbox. Emulated
+reply callbacks become inert and retain no caller continuation or reply value.
+Neither timeout nor cancellation retracts a delivered request or proves that
+processing was undone. There is no automatic retry. Await each reply before
+submitting the next item when request/reply pacing supplies your backpressure;
+fire-and-forget sends retain their existing unbounded queue behavior.
+
+A downstream subscription can own a parent actor and create its workers with
+`spawnLinked` or `spawnSupervised`. Keep each replacement returned by
+`handleChildExit`. Give pending `callResultAsync` operations the subscription's
+cancellation token. During disposal, close upstream admission, cancel that token
+to settle the outstanding calls, then await `stopAsync` on the parent and check
+for timeout or cleanup failure. On BEAM, explicitly await each current worker's
+stop as well if disposal must confirm the entire tree is dead; parent death alone
+does not confirm completed descendant shutdown. A synchronous IDisposable can
+request cancellation; an async disposal path must own the await and report its
+result. Notification suppression alone is not worker termination.
+
+Actor-owned Python cancellation registrations, locks, and deadline timers use
+small platform adapters for gaps in fable-library 5.19.0. Actor binders check
+cancellation before resuming user work, and actor-expression cleanup ignores
+duplicate terminal callbacks. Separately supplied Async computations keep their
+runtime behavior: in particular, Python Async.Sleep cancellation still leaves
+its underlying scheduled callback until its due time. Actor-owned call/stop
+**deadline timers** are cancelled physically; arbitrary user Async resources
+cannot receive that same guarantee from this library. The upstream work is
+captured in [the Fable runtime fix prompt](docs/fable-runtime-fix-prompt.md).

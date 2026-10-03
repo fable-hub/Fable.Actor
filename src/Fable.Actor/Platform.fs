@@ -188,3 +188,62 @@ let startDeadline (ms: int) (callback: unit -> unit) : obj = nativeOnly
 let cancelDeadline (handle: obj) : unit = nativeOnly
 
 #endif
+
+#if FABLE_COMPILER_BEAM
+
+let exitReason (reason: obj) : ActorExit =
+    if Erlang.exactEquals reason atomNormal then
+        ActorExit.Normal
+    else
+        ActorExit.Failed(ProcessExitException(formatReason reason))
+
+let monotonicMilliseconds () : int64 =
+    emitErlExpr () "erlang:monotonic_time(millisecond)"
+
+let beginCall (pid: Pid<'Msg>) : Ref<obj> * Ref<Pid<'Msg>> =
+    emitErlExpr pid "{erlang:alias([explicit_unalias]), erlang:monitor(process, $0)}"
+
+let sendAliasReply (alias: Ref<obj>) (value: 'Reply) : unit =
+    emitErlExpr (alias, value) "$0 ! {fable_actor_reply, $0, $1}, ok"
+
+/// Receive only this request's reply or target monitor signal.
+///
+/// invariant: unrelated application messages, links, and monitors remain untouched
+let recvCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) (slice: int) : int * obj =
+    emitErlExpr
+        (alias, monitor, slice)
+        """
+    receive
+        {fable_actor_reply, $0, Value} -> {0, Value};
+        {'DOWN', $1, process, _, Reason} -> {1, Reason}
+    after $2 -> {2, undefined} end
+    """
+
+/// Revoke first, then flush, so no reply can arrive after the flush.
+let endCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) : unit =
+    emitErlExpr
+        (alias, monitor)
+        """
+    (fun() ->
+        unalias($0), demonitor($1, [flush]),
+        Flush = fun Loop() ->
+            receive {fable_actor_reply, $0, _} -> Loop() after 0 -> ok end
+        end,
+        Flush()
+    end)()
+    """
+
+#endif
+
+#if FABLE_COMPILER_PYTHON
+
+/// Build a context-aware Async without the upstream cancellation fall-through wrapper.
+///
+/// decision: hands cancellation to the actor settlement gate because fable-library 5.19 protected_cont continues after on_cancel
+[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]
+let fromContext
+    (body: (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken -> unit)
+    : Async<'T> =
+    nativeOnly
+
+#endif

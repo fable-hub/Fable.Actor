@@ -52,10 +52,83 @@ let idle events cleanup : Actor<int> =
                 Actor.cast cleanup Signal
         })
 
+// decision: checks link notifications only after an observed child exit and a parent-handled checkpoint
+let linkExitCase cancelChild =
+    actor {
+        let started, noticed, checkedEvents = barrier (), barrier (), barrier ()
+        let handle, count = reporter None, reporter 0
+
+        let parent: Actor<obj> =
+            Actor.spawn (fun inbox ->
+                actor {
+                    Actor.trapExits ()
+
+                    let child =
+                        Actor.spawnLinked inbox (fun child ->
+                            actor {
+                                Actor.cast started Signal
+                                let! _ = child.Receive()
+                                return ()
+                            })
+
+                    Actor.cast handle (Some(Some child))
+
+                    let rec loop n =
+                        actor {
+                            let! msg = inbox.Receive()
+
+                            match Actor.tryAsChildExited msg with
+                            | Some _ ->
+                                Actor.cast count (Some(n + 1))
+                                Actor.cast noticed Signal
+                                return! loop (n + 1)
+                            | None ->
+                                Actor.cast count (Some n)
+                                Actor.cast checkedEvents Signal
+                                return! loop n
+                        }
+
+                    return! loop 0
+                })
+
+        do! await 1 started
+        let! child = Actor.call handle None
+        let child = Option.get child
+
+        if cancelChild then
+            let! stopped = Actor.stop 2000 child
+            assertThat (completed stopped) isTrue
+        else
+            Actor.send child 1
+
+        do! observeExit child
+#if FABLE_COMPILER_BEAM
+        if cancelChild then
+            do! await 1 noticed
+#endif
+        Actor.send parent (box "checkpoint")
+        do! await 1 checkedEvents
+        let! received = Actor.call count None
+#if FABLE_COMPILER_BEAM
+        assertThat received (isEqualTo (if cancelChild then 1 else 0))
+#else
+        assertThat received (isEqualTo 0)
+#endif
+        let! _ = Actor.stop 2000 parent
+        let! _ = Actor.stop 2000 started
+        let! _ = Actor.stop 2000 noticed
+        let! _ = Actor.stop 2000 checkedEvents
+        let! _ = Actor.stop 2000 handle
+        let! _ = Actor.stop 2000 count
+        return ()
+    }
+
 let tests =
     testList (
         "Lifecycle",
         [
+            testAsync ("normal linked child exit is silent", fun _ -> toAsync (linkExitCase false))
+            testAsync ("cancelled child exit follows the target link contract", fun _ -> toAsync (linkExitCase true))
             testAsync (
                 "idle stop observes exit and repeated stop is safe",
                 fun _ ->
@@ -214,8 +287,7 @@ let tests =
                             | Some child ->
 #if FABLE_COMPILER_BEAM
                                 // Monitoring is the worker-exit barrier; this does not issue another kill.
-                                let monitor = Fable.Beam.Erlang.monitor child.Pid
-                                Fable.Actor.Platform.waitProcessDeath monitor child.Pid
+                                do! observeExit child
                                 assertThat (Fable.Beam.Erlang.isProcessAlive child.Pid) isFalse
 #else
                                 do! await 1 cleaned
@@ -285,8 +357,7 @@ let tests =
                             assertThat (completed result) isTrue
 #if FABLE_COMPILER_BEAM
                             let replacement = Option.get replacement
-                            let monitor = Fable.Beam.Erlang.monitor replacement.Pid
-                            Fable.Actor.Platform.waitProcessDeath monitor replacement.Pid
+                            do! observeExit replacement
                             assertThat (Fable.Beam.Erlang.isProcessAlive replacement.Pid) isFalse
 #else
                             do! await 2 cleaned
@@ -361,6 +432,29 @@ let tests =
                     )
             )
             testAsync (
+                "pre-cancelled external lifetime does not evaluate an emulated actor body",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            use cts = new CancellationTokenSource()
+                            cts.Cancel()
+                            let called = reporter 0
+
+                            let worker: Actor<int> =
+                                Actor.spawnWithToken cts.Token (fun _ ->
+                                    Actor.cast called (Some 1)
+                                    actor { return () })
+
+                            let! stopped = Actor.stop 2000 worker
+                            assertThat (completed stopped) isTrue
+                            let! value = Actor.call called None
+                            assertThat value (isEqualTo 0)
+                            let! _ = Actor.stop 2000 called
+                            return ()
+                        }
+                    )
+            )
+            testAsync (
                 "external registration is released on normal exit",
                 fun _ ->
                     toAsync (
@@ -373,6 +467,61 @@ let tests =
                             let! stopped = Actor.stop 2000 worker
                             assertThat (completed stopped) isTrue
                             cts.Cancel()
+                            return ()
+                        }
+                    )
+            )
+            testAsync (
+                "late terminal callbacks cannot repeat cleanup or resume actor work",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let started, cleaned, resumed = barrier (), barrier (), barrier ()
+                            let callbacks = reporter None
+
+                            let worker: Actor<int> =
+                                Actor.spawn (fun _ ->
+                                    actor {
+                                        try
+                                            let! _ =
+                                                Async.FromContinuations(fun (ok, _, cancelled) ->
+                                                    Actor.cast
+                                                        callbacks
+                                                        (Some(
+                                                            Some(
+                                                                (fun () -> cancelled (System.OperationCanceledException())),
+                                                                (fun () -> ok 1)
+                                                            )
+                                                        ))
+
+                                                    Actor.cast started Signal)
+
+                                            Actor.cast resumed Signal
+                                        finally
+                                            Actor.cast cleaned Signal
+                                    })
+
+                            do! await 1 started
+                            let! pending = Actor.call callbacks None
+                            let cancel, reply = Option.get pending
+                            cancel ()
+                            let! stopped = Actor.stop 2000 worker
+                            assertThat (completed stopped) isTrue
+                            do! await 1 cleaned
+                            // .NET FromContinuations rejects duplicate callbacks; portable runtimes may deliver them.
+                            try
+                                reply ()
+                            with _ ->
+                                ()
+
+                            let! cleanCount = Actor.call cleaned Read
+                            let! resumedCount = Actor.call resumed Read
+                            assertThat cleanCount (isEqualTo 1)
+                            assertThat resumedCount (isEqualTo 0)
+                            let! _ = Actor.stop 2000 callbacks
+                            let! _ = Actor.stop 2000 started
+                            let! _ = Actor.stop 2000 cleaned
+                            let! _ = Actor.stop 2000 resumed
                             return ()
                         }
                     )
