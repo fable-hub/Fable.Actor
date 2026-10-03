@@ -119,21 +119,32 @@ type ActorBuilder() =
 
 type ActorOp<'T> = Async<'T>
 
-type Actor<'Msg> = {
-    Mb: MailboxProcessor<'Msg>
-    Cts: System.Threading.CancellationTokenSource
-} with
+type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime) =
+    member _.Mb = mb
+    member _.Cts = cts
+    member internal _.Lifetime = lifetime
+    member _.Pid: obj = box mb
 
-    member this.Pid: obj = box this.Mb
+    member _.Receive() : Async<'Msg> =
+        Async.FromContinuations(fun (ok, error, cancelled) ->
+            Async.StartWithContinuations(
+                mb.Receive(),
+                (fun msg ->
+                    if cts.IsCancellationRequested then
+                        cancelled (System.OperationCanceledException())
+                    else
+                        ok msg),
+                error,
+                cancelled,
+                cts.Token
+            ))
 
-    member this.Receive() : Async<'Msg> = this.Mb.Receive()
-
-    /// Queue a message unless this actor has already been killed.
+    /// Queue a message while the actor accepts work.
     ///
-    /// invariant: posting after cancellation is a no-op rather than an exception
-    member this.Post(msg: 'Msg) =
-        if not this.Cts.IsCancellationRequested then
-            this.Mb.Post(msg)
+    /// invariant: posting after cancellation or workflow exit is a no-op
+    member _.Post(msg: 'Msg) =
+        if not lifetime.IsStopping then
+            mb.Post msg
 
 type ActorBuilder() =
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> = async.Bind(op, f)
@@ -147,9 +158,37 @@ type ActorBuilder() =
 
     member _.TryWith(body: Async<'T>, handler: exn -> Async<'T>) : Async<'T> = async.TryWith(body, handler)
 
-    member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> = async.TryFinally(body, compensation)
+    /// Run cleanup once and preserve its failure, including during cancellation.
+    ///
+    /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
+    member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
+        async {
+            let! token = Async.CancellationToken
 
-    member _.Using(resource: 'a :> System.IDisposable, body: 'a -> Async<'T>) : Async<'T> = async.Using(resource, body)
+            return!
+                Async.FromContinuations(fun (ok, error, cancelled) ->
+                    let finish next value =
+                        let failure =
+                            try
+                                compensation ()
+                                None
+                            with ex ->
+                                Some ex
+
+                        match failure with
+                        | Some ex -> error ex
+                        | None -> next value
+
+                    Async.StartWithContinuations(body, finish ok, finish error, finish cancelled, token))
+        }
+
+    member this.Using(resource: 'a :> System.IDisposable, body: 'a -> Async<'T>) : Async<'T> =
+        this.TryFinally(
+            body resource,
+            fun () ->
+                if not (isNull (box resource)) then
+                    resource.Dispose()
+        )
 
     member _.While(guard: unit -> bool, body: Async<unit>) : Async<unit> = async.While(guard, body)
     member _.For(items: seq<'T>, body: 'T -> Async<unit>) : Async<unit> = async.For(items, body)
@@ -197,12 +236,30 @@ module Actor =
 
         { Pid = rawPid }
 
+    /// Spawn with external cancellation. BEAM cancellation requests native kill; it cannot unwind arbitrary ActorOp work.
+    ///
+    /// decision: releases the external registration in a watcher because kill cannot execute actor finalizers
+    let spawnWithToken (token: System.Threading.CancellationToken) (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
+        let child = spawn body
+        let registration = token.Register(fun () -> killProcess child.Pid)
+
+        if token.IsCancellationRequested then
+            killProcess child.Pid
+
+        Erlang.spawn (fun () ->
+            let monitor = Erlang.monitor child.Pid
+            waitProcessDeath monitor child.Pid
+            registration.Dispose())
+        |> ignore
+
+        child
+
     /// Spawn a linked child actor (parent gets EXIT signal on crash).
     ///
-    /// assumption: the caller is the supplied parent process — BEAM links the child to the calling process
-    let spawnLinked (_parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
+    /// decision: links to the supplied parent and monitors normal parent death so ownership does not depend on the caller
+    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
         let rawPid =
-            Erlang.spawnLink (fun () ->
+            spawnOwnedProcess parent.Pid (fun () ->
                 let me: Actor<'Msg> = { Pid = Erlang.self () }
                 (body me).Run(fun () -> ()))
 
@@ -213,6 +270,30 @@ module Actor =
 
     /// Kill an actor and its linked children.
     let kill (actor: Actor<'Msg>) : unit = killProcess actor.Pid
+
+    /// Kill and await native process death within a positive cleanup deadline.
+    /// Native kill does not execute actor finalizers.
+    let stop (cleanupDeadline: int) (target: Actor<'Msg>) : ActorOp<StopResult> =
+        if cleanupDeadline <= 0 then
+            invalidArg "cleanupDeadline" "Cleanup deadline must be positive"
+
+        {
+            Run =
+                fun cont ->
+                    cont (
+                        if stopProcess target.Pid cleanupDeadline then
+                            StopResult.Completed ActorExit.Cancelled
+                        else
+                            StopResult.TimedOut
+                    )
+        }
+
+    let stopAsync cleanupDeadline target : Async<StopResult> =
+        async {
+            let mutable result = StopResult.TimedOut
+            (stop cleanupDeadline target).Run(fun value -> result <- value)
+            return result
+        }
 
     /// Enable supervision — child EXIT signals become messages.
     ///
@@ -279,76 +360,89 @@ module Actor =
 
 #else
 
-    /// Spawn an actor with an optional external cancellation token.
-    /// When the external token is cancelled, the actor's CTS is also cancelled.
+    // decision: runs the body explicitly to observe all three Async exit continuations on every emulated target
+    let private spawnOwned token attach (body: Actor<'Msg> -> Async<unit>) =
+        let cts = new System.Threading.CancellationTokenSource()
+        let lifetime = ActorLifetime cts
+
+        let mb =
+            new MailboxProcessor<'Msg>((fun _ -> async { return () }), cancellationToken = cts.Token)
+
+        let inbox = Actor(mb, cts, lifetime)
+        // decision: wakes the portable mailbox on cancellation because JS/Python Receive does not register a wakeup
+        // invariant: the synthetic wakeup never reaches user code because the workflow token is already cancelled
+        lifetime.AddResource(Lifetime.cancellation cts.Token (fun () -> mb.Post Unchecked.defaultof<'Msg>))
+#if !FABLE_COMPILER
+        lifetime.AddResource(mb :> System.IDisposable)
+#endif
+        lifetime.AddResource(Lifetime.cancellation token lifetime.RequestStop)
+        attach inbox
+
+        Async.StartWithContinuations(
+            async { do! body inbox },
+            (fun () -> lifetime.Complete ActorExit.Normal),
+            (fun ex -> lifetime.Complete(ActorExit.Failed ex)),
+            (fun _ -> lifetime.Complete ActorExit.Cancelled),
+            cts.Token
+        )
+
+        inbox
+
+    /// Spawn cooperative work with an external lifetime token. The registration is released on exit.
     ///
-    /// decision: links external cancellation to a private CTS instead of putting the token in the actor's Async context
-    /// invariant: cancelling the external token prevents subsequent posts through the returned actor handle
+    /// decision: passes the owned token to the workflow so cancellation reaches receives and cooperative Async work
     let spawnWithToken (cancellationToken: System.Threading.CancellationToken) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
-        let cts = new System.Threading.CancellationTokenSource()
+        spawnOwned cancellationToken ignore body
 
-        cancellationToken.Register(fun () -> cts.Cancel())
-        |> ignore
-
-        let mutable inbox: Actor<'Msg> option = None
-
-        let mb =
-            MailboxProcessor.Start(fun mb ->
-                let actor = { Mb = mb; Cts = cts }
-                inbox <- Some actor
-                body actor)
-
-        match inbox with
-        | Some a -> a
-        | None -> { Mb = mb; Cts = cts }
-
-    /// Spawn an actor. Body receives inbox (self-reference) for Receive/Post.
-    ///
-    /// decision: owns a private CTS for explicit kill semantics without polluting operations in the actor body
+    /// Spawn an actor with an owned cooperative lifetime.
     let spawn (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
-        let cts = new System.Threading.CancellationTokenSource()
-        let mutable inbox: Actor<'Msg> option = None
+        spawnWithToken System.Threading.CancellationToken.None body
 
-        let mb =
-            MailboxProcessor.Start(fun mb ->
-                let actor = { Mb = mb; Cts = cts }
-                inbox <- Some actor
-                body actor)
-
-        match inbox with
-        | Some a -> a
-        | None -> { Mb = mb; Cts = cts }
-
-    /// Spawn a linked child actor. On crash, delivers ChildExited to parent.
+    /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
     ///
-    /// decision: emulates BEAM links by converting an unhandled body exception into a message to the parent
-    /// invariant: normal body completion does not emit ChildExited on non-BEAM targets
+    /// invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
+    /// decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
     let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
-        let cts = new System.Threading.CancellationTokenSource()
-        let mutable inbox: Actor<'Msg> option = None
+        spawnOwned
+            System.Threading.CancellationToken.None
+            (fun child ->
+                parent.Lifetime.Own child.Lifetime
 
-        let mb =
-            MailboxProcessor.Start(fun mb ->
-                let actor = { Mb = mb; Cts = cts }
-                inbox <- Some actor
+                child.Lifetime.Observe(fun exit ->
+                    match exit with
+                    | ActorExit.Failed ex -> parent.Post(unbox { Pid = child.Pid; Reason = box ex })
+                    | _ -> ())
+                |> ignore)
+            body
 
-                async {
-                    try
-                        do! body actor
-                    with ex ->
-                        parent.Post(unbox { Pid = box mb; Reason = box ex })
-                })
-
-        match inbox with
-        | Some a -> a
-        | None -> { Mb = mb; Cts = cts }
-
-    /// Kill an actor by cancelling its lifecycle and disposing its mailbox.
+    /// Request cooperative cancellation. Use stop to observe actual exit.
     ///
     /// invariant: after kill returns, Post ignores new messages through this handle
-    let kill (actor: Actor<'Msg>) : unit =
-        actor.Cts.Cancel()
-        (actor.Mb :> System.IDisposable).Dispose()
+    let kill (actor: Actor<'Msg>) : unit = actor.Lifetime.RequestStop()
+
+    /// Request shutdown and observe workflow and owned descendant exit within a positive deadline.
+    let stop (cleanupDeadline: int) (target: Actor<'Msg>) : ActorOp<StopResult> =
+        if cleanupDeadline <= 0 then
+            invalidArg "cleanupDeadline" "Cleanup deadline must be positive"
+
+        async {
+            let! token = Async.CancellationToken
+
+            return!
+                Async.FromContinuations(fun (ok, _, cancelled) ->
+                    let pending =
+                        Lifetime.Pending(fun result ->
+                            match result with
+                            | Choice1Of2 value -> ok value
+                            | Choice2Of2 ex -> cancelled ex)
+
+                    pending.Add(Lifetime.cancellation token (fun () -> pending.Settle(Choice2Of2(System.OperationCanceledException()))))
+                    pending.Add(Lifetime.deadline cleanupDeadline (fun () -> pending.Settle(Choice1Of2 StopResult.TimedOut)))
+                    pending.Add(target.Lifetime.Observe(fun exit -> pending.Settle(Choice1Of2(StopResult.Completed exit))))
+                    target.Lifetime.RequestStop())
+        }
+
+    let stopAsync cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
 
     /// Enable supervision (stub on non-BEAM).
     ///
@@ -358,7 +452,8 @@ module Actor =
     /// Send a message and await a reply (inside actor { }).
     let call (target: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : ActorOp<'Reply> =
         actor {
-            let! reply = target.Mb.PostAndAsyncReply(fun rc -> (msg, { Reply = fun r -> rc.Reply(r) }))
+            let! reply =
+                target.Mb.PostAndAsyncReply(fun rc -> (msg, { Reply = fun r -> rc.Reply(r) }))
 
             return reply
         }

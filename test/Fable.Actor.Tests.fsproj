@@ -11,6 +11,7 @@
     <Compile Include="ActorTests.fs" />
     <Compile Include="SupervisionTests.fs" />
     <Compile Include="BuilderTests.fs" />
+    <Compile Include="LifecycleTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>

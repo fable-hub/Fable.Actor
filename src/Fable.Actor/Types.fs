@@ -30,6 +30,19 @@ type Next<'State> =
 /// decision: keeps pid and reason opaque because their runtime representations differ across targets
 type ChildExited = { Pid: obj; Reason: obj }
 
+/// Observed terminal state of an actor workflow or native process.
+[<RequireQualifiedAccess>]
+type ActorExit =
+    | Normal
+    | Cancelled
+    | Failed of exn
+
+/// A stop deadline bounds observation, not arbitrary user work.
+[<RequireQualifiedAccess>]
+type StopResult =
+    | Completed of ActorExit
+    | TimedOut
+
 exception ProcessExitException of string
 
 /// What the supervisor should do when a child crashes.

@@ -62,10 +62,10 @@ let private controlFlowTests =
 
                             do!
                                 actor {
-                                    use _r =
-                                        { new System.IDisposable with
+                                    use _r = {
+                                        new System.IDisposable with
                                             member _.Dispose() = disposed <- true
-                                        }
+                                    }
 
                                     do! sleep 1
                                 }

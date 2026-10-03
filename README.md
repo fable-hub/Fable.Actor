@@ -216,3 +216,42 @@ MIT
 - [FSharp.Control.AsyncRx](https://github.com/dbrattli/AsyncRx) — Async Reactive Extensions for F#
 - [Fable](https://github.com/fable-compiler/Fable) — F# to JS/Python/BEAM compiler
 - [Fable.Beam](https://github.com/fable-compiler/Fable.Beam) — F# bindings (FFI) for BEAM/Erlang
+
+## Owned shutdown
+
+`Actor.kill` requests shutdown. `Actor.stop cleanupDeadline actor` (or
+`stopAsync`) requests it and returns `StopResult.Completed exit` or `TimedOut`.
+The deadline must be a positive number of milliseconds and is validated before
+shutdown begins. Repeated and concurrent requests share the same lifecycle.
+
+On .NET, JavaScript, and Python, spawn, spawnLinked, and spawnWithToken run with
+an owned cancellation token. Idle receives wake, cooperative Async work cancels,
+and actor-expression `finally`/`use` cleanup runs once. Completion observes the
+workflow and its owned linked descendants exiting. Cleanup failures are returned
+as `ActorExit.Failed`; a timeout leaves unfinished work owned and does not force
+it to exit. Synchronous user code can block the target scheduler and delay both
+cancellation and deadline observation. Finalizers inside separately supplied
+Async computations retain that runtime's semantics.
+
+On BEAM, stop monitors native process death after kill. It does not promise
+finalizers, graceful cleanup, or completed descendant shutdown at the instant
+that the parent dies. An external token requests native kill. A process watcher
+releases its registration after death. Use an application shutdown message for
+graceful cleanup before native stop, or OTP supervision for shutdown escalation.
+
+`spawnLinked` now establishes parent ownership on every target: parent shutdown,
+normal completion, and failure all shut down the child. Native BEAM links also
+retain their usual symmetric abnormal-exit behavior: an abnormal or killed child
+terminates a parent that is not trapping exits; a trapping parent receives
+`ChildExited`. Normal child exits are suppressed by the actor receive protocol.
+Emulated links preserve their supervision default: only abnormal child exit
+emits `ChildExited`, and it does not automatically terminate the parent. Normal
+and cooperative cancelled child exits are silent. The supplied BEAM parent is
+now the link endpoint even when spawnLinked is invoked by another process.
+
+This ownership is stronger than a raw BEAM link, which alone does not terminate
+children on normal parent exit. Keep replacement children returned by
+`handleChildExit` (the rc.12 API) so later shutdown addresses the current
+generation. Actor handles on emulated targets are now constructed by spawn APIs
+rather than public record literals; Mb and Cts remain available for existing
+interop, but lifecycle operations must go through Actor APIs.

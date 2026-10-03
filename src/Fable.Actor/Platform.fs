@@ -61,7 +61,7 @@ let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit =
 /// decision: drops stale replies and normal exits because neither is an application message
 /// invariant: abnormal EXIT signals reach the actor body as ChildExited values
 let rec receiveMsg (cont: obj -> unit) : unit =
-    match Erlang.receive<InternalMsg> () with
+    match Erlang.receive<InternalMsg>() with
     | ActorMsg payload -> cont payload
     | Reply _ -> receiveMsg cont // stray reply (ref already timed out); drop and keep waiting
     | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
@@ -109,5 +109,82 @@ let timerSchedule (ms: int) (callback: unit -> unit) : obj =
 /// Cancel a scheduled timer by sending the cancel atom to its process.
 let timerCancel (timer: obj) : unit =
     Erlang.send (unbox<Pid<TimerControl>> timer) Cancel
+
+#endif
+
+#if FABLE_COMPILER_BEAM
+
+/// Link to the supplied parent and watch its normal exit as well as abnormal exit.
+///
+/// decision: uses an ownership watcher because native links alone leave children alive after normal parent exit
+/// invariant: the watcher exits when either endpoint dies and kills the child on every parent death
+let spawnOwnedProcess (parent: Pid<'Parent>) (body: unit -> unit) : Pid<'Msg> =
+    emitErlExpr
+        (parent, body)
+        """
+    (fun() ->
+        Parent = $0,
+        Child = spawn(fun() -> link(Parent), $1(ok) end),
+        spawn(fun() ->
+            PM = monitor(process, Parent), CM = monitor(process, Child),
+            receive
+                {'DOWN', PM, process, Parent, _} -> exit(Child, kill);
+                {'DOWN', CM, process, Child, _} -> ok
+            end
+        end),
+        Child
+    end)()
+    """
+
+let waitProcessDeath (monitor: Ref<Pid<'Msg>>) (pid: Pid<'Msg>) : unit =
+    emitErlExpr (monitor, pid) "receive {'DOWN', $0, process, $1, _} -> ok end"
+
+/// Kill and observe process death. Monitoring precedes the exit signal to close the death race.
+///
+/// tradeoff: native kill skips user finalizers but provides process death even for noncooperative work
+let stopProcess (pid: Pid<'Msg>) (deadline: int) : bool =
+    emitErlExpr
+        (pid, deadline)
+        """
+    (fun() ->
+        M = monitor(process, $0), exit($0, kill),
+        receive {'DOWN', M, process, $0, _} -> true
+        after $1 -> demonitor(M, [flush]), false end
+    end)()
+    """
+
+#endif
+
+#if FABLE_COMPILER_PYTHON
+
+open Fable.Core
+
+// decision: uses native registration handles because fable-library 5.19 Register omits its return value
+// decision: replaces the listener dictionary on removal so disposal during Cancel does not mutate its live iterator
+// invariant: removing an actor registration leaves other token listeners installed
+[<Emit("$0.add_listener($1)")>]
+let addCancellationListener (token: System.Threading.CancellationToken) (callback: unit -> unit) : int = nativeOnly
+
+[<Emit("setattr($0, 'listeners', {k: v for k, v in $0.listeners.items() if k != $1})")>]
+let removeCancellationListener (token: System.Threading.CancellationToken) (id: int) : unit = nativeOnly
+
+[<Emit("__import__('threading').RLock()")>]
+let newGate () : obj = nativeOnly
+
+[<Emit("$0.acquire()")>]
+let enterGate (gate: obj) : unit = nativeOnly
+
+[<Emit("$0.release()")>]
+let leaveGate (gate: obj) : unit = nativeOnly
+
+[<Emit("$0.lock")>]
+let cancellationGate (token: System.Threading.CancellationToken) : obj = nativeOnly
+
+// decision: retains the asyncio timer handle so settlement cancels the timer rather than only suppressing its callback
+[<Emit("__import__('asyncio').get_running_loop().call_later($0 / 1000, $1)")>]
+let startDeadline (ms: int) (callback: unit -> unit) : obj = nativeOnly
+
+[<Emit("$0.cancel()")>]
+let cancelDeadline (handle: obj) : unit = nativeOnly
 
 #endif

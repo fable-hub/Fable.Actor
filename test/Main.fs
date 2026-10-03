@@ -13,4 +13,9 @@ open type Scriptorium.Quill.Runner
 //                  onto the resolved promise — the value returned here is ignored
 [<EntryPoint>]
 let main _ =
-    runTests [ ActorTests.tests; SupervisionTests.tests; BuilderTests.tests ]
+    runTests [
+        ActorTests.tests
+        SupervisionTests.tests
+        BuilderTests.tests
+        LifecycleTests.tests
+    ]

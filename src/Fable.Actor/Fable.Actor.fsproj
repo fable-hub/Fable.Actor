@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="Types.fs" />
     <Compile Include="Platform.fs" />
+    <Compile Include="Lifecycle.fs" />
     <Compile Include="Actor.fs" />
   </ItemGroup>
   <ItemGroup>
