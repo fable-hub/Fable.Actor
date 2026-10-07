@@ -159,6 +159,9 @@ let stopProcess (pid: Pid<'Msg>) (deadline: int) : bool =
 
 open Fable.Core
 
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5036
+// Replace addCancellationListener/removeCancellationListener/cancellationGate with the
+// public disposable token.Register API when Lifetime.cancellation retires its Python branch.
 // decision: uses native registration handles because fable-library 5.19 Register omits its return value
 // decision: replaces the listener dictionary on removal so disposal during Cancel does not mutate its live iterator
 // invariant: removing an actor registration leaves other token listeners installed
@@ -168,6 +171,8 @@ let addCancellationListener (token: System.Threading.CancellationToken) (callbac
 [<Emit("setattr($0, 'listeners', {k: v for k, v in $0.listeners.items() if k != $1})")>]
 let removeCancellationListener (token: System.Threading.CancellationToken) (id: int) : unit = nativeOnly
 
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5035
+// Delete newGate/enterGate/leaveGate when Lifetime.synchronize uses the fixed runtime lock.
 [<Emit("__import__('threading').RLock()")>]
 let newGate () : obj = nativeOnly
 
@@ -180,6 +185,9 @@ let leaveGate (gate: obj) : unit = nativeOnly
 [<Emit("$0.lock")>]
 let cancellationGate (token: System.Threading.CancellationToken) : obj = nativeOnly
 
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+// Delete startDeadline/cancelDeadline after Lifetime.deadline uses fixed Async.Sleep;
+// retain positive deadlines and disposal of the actor-owned timer on every settlement.
 // decision: retains the asyncio timer handle so settlement cancels the timer rather than only suppressing its callback
 [<Emit("__import__('asyncio').get_running_loop().call_later($0 / 1000, $1)")>]
 let startDeadline (ms: int) (callback: unit -> unit) : obj = nativeOnly
@@ -238,6 +246,10 @@ let endCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) : unit =
 #if FABLE_COMPILER_PYTHON
 
 /// Build a context-aware Async without the upstream cancellation fall-through wrapper.
+///
+/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+/// and https://github.com/fable-compiler/Fable/pull/5038
+/// Delete this raw-context adapter when Lifetime.withContext uses standard Async on Python.
 ///
 /// decision: hands cancellation to the actor settlement gate because fable-library 5.19 protected_cont continues after on_cancel
 [<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]

@@ -76,6 +76,9 @@ module Helpers =
                         Lifetime.Pending(fun result ->
                             match result with
                             | Some ex -> error ex
+                            // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+                            // Replace the dummy int with unit once Python unit continuations
+                            // accept ok (); retain this independent observed-exit barrier.
                             | None -> ok 1)
 
                     pending.Add(

@@ -6,8 +6,14 @@ open System
 open System.Threading
 open Fable.Actor.Types
 
+// TODO(upstream): retire the marked adapters only after the pinned compiler and runtime
+// include the referenced fixes and the four-target suite passes without those adapters.
+// Pending settlement and ActorLifetime ownership remain library responsibilities.
 module internal Lifetime =
 #if FABLE_COMPILER_PYTHON
+    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5035
+    // Replace this Python gate branch with obj()/lock and remove Platform's gate helpers
+    // once the published Python runtime shares a stable lock per object.
     let newGate = Platform.newGate
     // decision: owns a stable RLock because fable-library 5.19 util.lock creates a fresh lock for each invocation
     let synchronize gate action =
@@ -24,6 +30,10 @@ module internal Lifetime =
 
     let withContext body : Async<'T> =
 #if FABLE_COMPILER_PYTHON
+        // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+        // and https://github.com/fable-compiler/Fable/pull/5038
+        // Use the ordinary Async.CancellationToken/FromContinuations branch after unit
+        // continuations and terminal cancellation are fixed; then delete Platform.fromContext.
         Platform.fromContext body
 #else
         async {
@@ -34,6 +44,9 @@ module internal Lifetime =
 
     let guard (expression: unit -> Async<'T>) : Async<'T> =
 #if FABLE_COMPILER_PYTHON
+        // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+        // Collapse this Python guard to async.Delay after cancelled Delay/Bind no longer
+        // run user work or receive a second terminal callback from a cancelled delay.
         withContext (fun ((ok, error, cancelled), token) ->
             let gate = newGate ()
             let mutable finished = false
@@ -118,6 +131,9 @@ module internal Lifetime =
 
     let cancellation (token: CancellationToken) callback =
 #if FABLE_COMPILER_PYTHON
+        // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5036
+        // Use token.Register like the other targets once it returns a disposable handle
+        // and safely handles disposal during cancellation; delete the listener-field adapters.
         let id = Platform.addCancellationListener token callback
 
         let registration =
@@ -125,6 +141,9 @@ module internal Lifetime =
 #else
         let registration = token.Register(Action callback) :> IDisposable
 #endif
+        // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5036
+        // Remove the post-registration inspection once published JS/Python Register invokes
+        // already-cancelled callbacks immediately; keep the pending operation's settlement gate.
         // Fable JS/Python Register does not invoke an already-cancelled token's callback.
         // invariant: registration followed by inspection covers cancellation before and during acquisition
         if token.IsCancellationRequested then
@@ -134,6 +153,9 @@ module internal Lifetime =
 
     let deadline (ms: int) callback =
 #if FABLE_COMPILER_PYTHON
+        // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+        // Reuse the CTS/Async.Sleep branch once cancellation retires the Python timer
+        // and listener exactly once; remove Platform.startDeadline/cancelDeadline with it.
         let handle = Platform.startDeadline ms callback
         disposable (fun () -> Platform.cancelDeadline handle)
 #else
@@ -141,6 +163,9 @@ module internal Lifetime =
 
         Async.StartWithContinuations(
             async { do! Async.Sleep ms },
+            // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+            // This explicit value parameter avoids unit callbacks whose captured default
+            // gets overwritten by None in Python; simplify only after generated-code validation.
             (fun value ->
                 ignore value
                 callback ()),

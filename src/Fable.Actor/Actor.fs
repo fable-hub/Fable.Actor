@@ -125,6 +125,9 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     member internal _.Lifetime = lifetime
     member _.Pid: obj = box mb
 
+    // TODO(upstream): this check pairs with spawnOwned's synthetic cancellation wakeup.
+    // Retire both only after published JS/Python Receive wakes and cancels correctly;
+    // https://github.com/fable-compiler/Fable/pull/5038 documents this remaining mailbox gap.
     member _.Receive() : Async<'Msg> =
         Async.FromContinuations(fun (ok, error, cancelled) ->
             Async.StartWithContinuations(
@@ -145,6 +148,9 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
+    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+    // Revisit the extra delayed binder and Lifetime.guard calls after portable Bind/Delay
+    // stop on cancellation. Keep actor startup/late-callback cancellation regressions.
     // decision: delays user binders so a cancelled portable continuation cannot execute user code before its next token check
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
         async.Bind(op, fun value -> Lifetime.guard (fun () -> f value))
@@ -164,6 +170,11 @@ type ActorBuilder() =
     member _.TryWith(body: Async<'T>, handler: exn -> Async<'T>) : Async<'T> = async.TryWith(body, handler)
 
     /// Run cleanup once and preserve its failure, including during cancellation.
+    ///
+    /// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+    /// Revisit the duplicate-terminal guard after the delay fix, but retain cleanup failure
+    /// reporting: standard Async preserves cancellation even when its finalizer throws.
+    /// Actor.stop must still report that cleanup failure, including on .NET.
     ///
     /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
     member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
@@ -480,6 +491,9 @@ module Actor =
             new MailboxProcessor<'Msg>((fun _ -> async { return () }), cancellationToken = cts.Token)
 
         let inbox = Actor(mb, cts, lifetime)
+        // TODO(upstream): mailbox wakeup is not fixed by https://github.com/fable-compiler/Fable/pull/5038.
+        // Retire this synthetic post and Receive's cancellation check only when a published
+        // JS/Python mailbox wakes idle Receive on cancellation without delivering user work.
         // decision: wakes the portable mailbox on cancellation because JS/Python Receive does not register a wakeup
         // invariant: the synthetic wakeup never reaches user code because the workflow token is already cancelled
         lifetime.AddResource(Lifetime.cancellation cts.Token (fun () -> mb.Post Unchecked.defaultof<'Msg>))

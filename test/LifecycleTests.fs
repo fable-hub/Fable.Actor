@@ -406,6 +406,8 @@ let tests =
                                         try
                                             let! _ =
                                                 Async.FromContinuations(fun (ok, _, _) ->
+                                                    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+                                                    // Use ok () after the unit-continuation fix; keep the release barrier.
                                                     Actor.cast releaseHandle (Some(Some(fun () -> ok 1)))
                                                     Actor.cast started Signal)
 
@@ -485,6 +487,8 @@ let tests =
                                         try
                                             let! _ =
                                                 Async.FromContinuations(fun (ok, _, cancelled) ->
+                                                    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+                                                    // Use a unit success payload after the fix; keep the duplicate-callback probe.
                                                     Actor.cast
                                                         callbacks
                                                         (Some(
