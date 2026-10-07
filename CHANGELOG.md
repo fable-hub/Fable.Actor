@@ -1,11 +1,19 @@
 ---
-last_commit_released: 285d9dc004ca012118acf770658ac875cbb6d866
+last_commit_released: 76f7dc3eb1ca49de7c7fb464ee8faed22c5b052e
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.13 - 2026-10-07
+
+### 🐞 Bug Fixes
+
+* Own actor shutdown and settle request/reply waits (#65) ([c941994](https://github.com/fable-hub/Fable.Actor/commit/c9419944790204bd1c642e632fa94075fec8a219))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/285d9dc004ca012118acf770658ac875cbb6d866..76f7dc3eb1ca49de7c7fb464ee8faed22c5b052e)</small></strong>
 
 ## 5.0.0-rc.12 - 2026-09-29
 
