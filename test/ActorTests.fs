@@ -25,7 +25,28 @@ type Command =
 
 type CollectorMsg<'T> =
     | Collect of 'T
-    | GetResults
+    | GetResults of expectedCount: int
+
+// decision: holds collector replies until the expected messages arrive so independent senders do not rely on scheduler timing
+let private collector () =
+    Actor.start ([], []) (fun (results, waiters) (msg, rc) ->
+        match msg with
+        | Collect x ->
+            let results = results @ [ x ]
+            let count = List.length results
+
+            let ready, pending =
+                waiters
+                |> List.partition (fun (expected, _) -> expected <= count)
+
+            for _, reply in ready do
+                reply.Reply results
+
+            Continue(results, pending)
+        | GetResults expected when expected > List.length results -> Continue(results, (expected, rc) :: waiters)
+        | GetResults _ ->
+            rc.Reply results
+            Continue(results, waiters))
 
 type TimerMsg =
     | Tick
@@ -57,13 +78,7 @@ let private spawnTests =
                 fun _ ->
                     toAsync (
                         actor {
-                            let collector =
-                                Actor.start [] (fun results (msg, rc) ->
-                                    match msg with
-                                    | Collect x -> Continue(results @ [ x ])
-                                    | GetResults ->
-                                        rc.Reply results
-                                        Continue results)
+                            let collector = collector ()
 
                             let _worker: Actor<string> =
                                 Actor.spawn (fun _inbox ->
@@ -71,10 +86,10 @@ let private spawnTests =
                                     Actor.cast collector (Collect "world")
                                     actor { return () })
 
-                            do! sleep 50
-
-                            let! results = Actor.call collector GetResults
+                            let! results = Actor.callWithTimeout 2000 collector (GetResults 2)
                             assertThat results (isEqualTo [ "hello"; "world" ])
+                            let! _ = Actor.stop 2000 collector
+                            return ()
                         }
                     )
             )
@@ -84,13 +99,7 @@ let private spawnTests =
                 fun _ ->
                     toAsync (
                         actor {
-                            let collector =
-                                Actor.start [] (fun results (msg, rc) ->
-                                    match msg with
-                                    | Collect x -> Continue(results @ [ x ])
-                                    | GetResults ->
-                                        rc.Reply results
-                                        Continue results)
+                            let collector = collector ()
 
                             let doubler: Actor<int> =
                                 Actor.spawn (fun inbox ->
@@ -107,10 +116,11 @@ let private spawnTests =
                             Actor.send doubler 2
                             Actor.send doubler 3
 
-                            do! sleep 50
-
-                            let! results = Actor.call collector GetResults
+                            let! results = Actor.callWithTimeout 2000 collector (GetResults 3)
                             assertThat results (isEqualTo [ 2; 4; 6 ])
+                            let! _ = Actor.stop 2000 doubler
+                            let! _ = Actor.stop 2000 collector
+                            return ()
                         }
                     )
             )

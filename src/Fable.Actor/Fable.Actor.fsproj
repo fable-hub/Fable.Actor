@@ -10,8 +10,10 @@
     <Description>Cross-platform actor library for F# compiled via Fable to BEAM, Python, and JavaScript</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="Platform.fs" />
+    <Compile Include="Lifecycle.fs" />
     <Compile Include="Actor.fs" />
   </ItemGroup>
   <ItemGroup>
@@ -22,7 +24,7 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Fable.Beam" Version="5.0.0-rc.37" />
+    <PackageReference Include="Fable.Beam" Version="5.1.0" />
     <PackageReference Include="Fable.Core" Version="5.0.0" />
   </ItemGroup>
 </Project>

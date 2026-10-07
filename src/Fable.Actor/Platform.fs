@@ -61,7 +61,7 @@ let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit =
 /// decision: drops stale replies and normal exits because neither is an application message
 /// invariant: abnormal EXIT signals reach the actor body as ChildExited values
 let rec receiveMsg (cont: obj -> unit) : unit =
-    match Erlang.receive<InternalMsg> () with
+    match Erlang.receive<InternalMsg>() with
     | ActorMsg payload -> cont payload
     | Reply _ -> receiveMsg cont // stray reply (ref already timed out); drop and keep waiting
     | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
@@ -109,5 +109,204 @@ let timerSchedule (ms: int) (callback: unit -> unit) : obj =
 /// Cancel a scheduled timer by sending the cancel atom to its process.
 let timerCancel (timer: obj) : unit =
     Erlang.send (unbox<Pid<TimerControl>> timer) Cancel
+
+#endif
+
+#if FABLE_COMPILER_BEAM
+
+/// Link to the supplied parent and watch its normal exit as well as abnormal exit.
+///
+/// decision: uses an ownership watcher because native links alone leave children alive after normal parent exit
+/// invariant: the watcher exits when either endpoint dies and kills the child on every parent death
+/// invariant: the supplied parent link exists before the child handle is returned while both endpoints remain alive
+/// decision: uses atomic spawn_link for the caller and a monitored startup handshake for a different supplied parent
+let spawnOwnedProcess (parent: Pid<'Parent>) (body: unit -> unit) : Pid<'Msg> =
+    emitErlExpr
+        (parent, body)
+        """
+    (fun() ->
+        Parent = $0,
+        Caller = self(),
+        Child = case Parent =:= Caller of
+            true -> spawn_link(fun() -> $1(ok) end);
+            false ->
+                Ready = make_ref(),
+                {Pid, M} = spawn_monitor(fun() ->
+                    link(Parent), Caller ! {Ready, self()}, $1(ok)
+                end),
+                receive
+                    {Ready, Pid} -> demonitor(M, [flush]);
+                    {'DOWN', M, process, Pid, _} -> ok
+                end,
+                Pid
+        end,
+        spawn(fun() ->
+            PM = monitor(process, Parent), CM = monitor(process, Child),
+            receive
+                {'DOWN', PM, process, Parent, _} -> exit(Child, kill);
+                {'DOWN', CM, process, Child, _} -> ok
+            end
+        end),
+        Child
+    end)()
+    """
+
+let waitProcessDeath (monitor: Ref<Pid<'Msg>>) (pid: Pid<'Msg>) : unit =
+    emitErlExpr (monitor, pid) "receive {'DOWN', $0, process, $1, _} -> ok end"
+
+/// Kill and observe process death. Monitoring precedes the exit signal to close the death race.
+///
+/// tradeoff: native kill skips user finalizers but provides process death even for noncooperative work
+let stopProcess (pid: Pid<'Msg>) (deadline: int) : bool =
+    emitErlExpr
+        (pid, deadline)
+        """
+    (fun() ->
+        M = monitor(process, $0), exit($0, kill),
+        receive {'DOWN', M, process, $0, _} -> true
+        after $1 -> demonitor(M, [flush]), false end
+    end)()
+    """
+
+#endif
+
+#if FABLE_COMPILER_PYTHON
+
+open Fable.Core
+
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5036
+// Replace addCancellationListener/removeCancellationListener/cancellationGate with the
+// public disposable token.Register API when Lifetime.cancellation retires its Python branch.
+// decision: uses native registration handles because fable-library 5.19 Register omits its return value
+// decision: replaces the listener dictionary on removal so disposal during Cancel does not mutate its live iterator
+// invariant: removing an actor registration leaves other token listeners installed
+[<Emit("$0.add_listener($1)")>]
+let addCancellationListener (token: System.Threading.CancellationToken) (callback: unit -> unit) : int = nativeOnly
+
+[<Emit("setattr($0, 'listeners', {k: v for k, v in $0.listeners.items() if k != $1})")>]
+let removeCancellationListener (token: System.Threading.CancellationToken) (id: int) : unit = nativeOnly
+
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5035
+// Delete newGate/enterGate/leaveGate when Lifetime.synchronize uses the fixed runtime lock.
+[<Emit("__import__('threading').RLock()")>]
+let newGate () : obj = nativeOnly
+
+[<Emit("$0.acquire()")>]
+let enterGate (gate: obj) : unit = nativeOnly
+
+[<Emit("$0.release()")>]
+let leaveGate (gate: obj) : unit = nativeOnly
+
+[<Emit("$0.lock")>]
+let cancellationGate (token: System.Threading.CancellationToken) : obj = nativeOnly
+
+// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+// Delete startDeadline/cancelDeadline after Lifetime.deadline uses fixed Async.Sleep;
+// retain positive deadlines and disposal of the actor-owned timer on every settlement.
+// decision: retains the asyncio timer handle so settlement cancels the timer rather than only suppressing its callback
+[<Emit("__import__('asyncio').get_running_loop().call_later($0 / 1000, $1)")>]
+let startDeadline (ms: int) (callback: unit -> unit) : obj = nativeOnly
+
+[<Emit("$0.cancel()")>]
+let cancelDeadline (handle: obj) : unit = nativeOnly
+
+#endif
+
+#if FABLE_COMPILER_BEAM
+
+let exitReason (reason: obj) : ActorExit =
+    if Erlang.exactEquals reason atomNormal then
+        ActorExit.Normal
+    else
+        ActorExit.Failed(ProcessExitException(formatReason reason))
+
+let monotonicMilliseconds () : int64 =
+    emitErlExpr () "erlang:monotonic_time(millisecond)"
+
+let beginCall (pid: Pid<'Msg>) : Ref<obj> * Ref<Pid<'Msg>> =
+    emitErlExpr pid "{erlang:alias([explicit_unalias]), erlang:monitor(process, $0)}"
+
+let sendAliasReply (alias: Ref<obj>) (value: 'Reply) : unit =
+    emitErlExpr (alias, value) "$0 ! {fable_actor_reply, $0, $1}, ok"
+
+/// Receive only this request's reply or target monitor signal.
+///
+/// invariant: unrelated application messages, links, and monitors remain untouched
+let recvCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) (slice: int) : int * obj =
+    emitErlExpr
+        (alias, monitor, slice)
+        """
+    receive
+        {fable_actor_reply, $0, Value} -> {0, Value};
+        {'DOWN', $1, process, _, Reason} -> {1, Reason}
+    after $2 -> {2, undefined} end
+    """
+
+/// Revoke first, then flush, so no reply can arrive after the flush.
+let endCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) : unit =
+    emitErlExpr
+        (alias, monitor)
+        """
+    (fun() ->
+        unalias($0), demonitor($1, [flush]),
+        Flush = fun Loop() ->
+            receive {fable_actor_reply, $0, _} -> Loop() after 0 -> ok end
+        end,
+        Flush()
+    end)()
+    """
+
+#endif
+
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
+
+open Fable.Core
+
+/// Build a context-aware Async without a preceding cancellation checkpoint.
+///
+/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
+/// and https://github.com/fable-compiler/Fable/pull/5038
+/// Delete the Python branch when Lifetime.withContext uses standard Async on Python.
+/// TODO(upstream): retire the JS branch once native TryFinally installs compensation
+/// before checking cancellation; the resource-acquisition regressions must still pass.
+///
+/// decision: hands cancellation to the actor settlement gate so acquired resources receive cleanup even when their token is already cancelled
+#if FABLE_COMPILER_PYTHON
+[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]
+#else
+[<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken])")>]
+#endif
+let fromContext
+    (body: (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken -> unit)
+    : Async<'T> =
+    nativeOnly
+
+#endif
+
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
+
+/// Run a nested Async using the incoming trampoline and guarded continuations.
+///
+/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+/// Delete the Python branch with the guard/finalizer adapters once native Delay/Bind
+/// and TryFinally preserve cancellation and exactly-once cleanup, and Receive uses
+/// the native mailbox workflow without a separate async root.
+/// TODO(upstream): retire the JS branch when native TryFinally installs cleanup before
+/// cancellation and Receive honors owned cancellation without its current wrapper.
+///
+/// decision: preserves the incoming trampoline so immediately completed actor steps still yield before exhausting the stack
+/// invariant: terminal continuation chains also yield through the shared trampoline
+#if FABLE_COMPILER_PYTHON
+[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token), lambda op: lambda cs: op(ctx.__class__(ctx.trampoline, ctx.cancel_token, *(lambda value, next=next: ctx.trampoline.run(lambda: next(value)) for next in cs))))")>]
+#else
+[<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken], op => cs => { const callbacks = cs.map(next => value => { const resume = () => next(value); if (ctx.trampoline.incrementAndCheck()) ctx.trampoline.hijack(resume); else resume(); }); op({...ctx, onSuccess: callbacks[0], onError: callbacks[1], onCancel: callbacks[2]}); })")>]
+#endif
+let fromContextWithRun
+    (body:
+        (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken
+            -> (Async<'T> -> (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) -> unit)
+            -> unit)
+    : Async<'T> =
+    nativeOnly
 
 #endif

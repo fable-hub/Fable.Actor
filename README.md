@@ -82,10 +82,8 @@ MailboxProcessor.Start (fun inbox -> async { ... })   // MailboxProcessor
 spawn                  (fun inbox -> actor { ... })   // Fable.Actor
 ```
 
-- **`spawn`** *launches* an actor — it starts a long-running process with a mailbox and returns an `Actor<'Msg>` handle. It is the equivalent of `MailboxProcessor.Start`. On .NET/Python/JS it wraps `MailboxProcessor.Start`; on BEAM it wraps `Erlang.spawn`.
-- **`actor { }`** *describes the body* — the receive loop you pass to `spawn`. It is the equivalent of `async { }`. On .NET/Python/JS it **is** `async` (`ActorOp<'T> = Async<'T>`, and every CE member delegates straight to the `async` builder); on BEAM it compiles to a CPS-based blocking receive instead, since the BEAM has no async runtime.
-
-In short: `actor` is to `spawn` what `async` is to `MailboxProcessor.Start`. The only reason `actor` exists rather than reusing `async` is BEAM — on the other three targets it's a transparent passthrough.
+- **`spawn`** launches the actor and returns its handle: `MailboxProcessor` on .NET/Python/JS, a native process on BEAM.
+- **`actor { }`** describes its body. Operations use `Async` on .NET/Python/JS, with actor cancellation and cleanup guards; BEAM uses a CPS computation with native blocking receive.
 
 ### Supervision
 
@@ -145,11 +143,10 @@ schedule 1000 (fun () -> cast ticker "tick") |> ignore
 
 ```text
 src/Fable.Actor/
-  Types.fs      — ReplyChannel, Next<'State>, ChildExited, Directive, Strategy
-  Platform.fs   — BEAM: IActorPlatform + [<ImportAll("fable_actor_platform")>]
-                  Non-BEAM: empty (uses MailboxProcessor directly)
-  Actor.fs      — actor { }, spawn, spawnLinked, start, send, call, kill, schedule
-  erl/          — BEAM platform implementation (native processes)
+  Types.fs      — Messages, supervision, call and shutdown results
+  Platform.fs   — Native BEAM protocol primitives and Python runtime adapters
+  Lifecycle.fs  — Emulated actor ownership and pending-operation settlement
+  Actor.fs      — Actor computation expression and public APIs
 ```
 
 ### Platform Strategy
@@ -161,26 +158,65 @@ src/Fable.Actor/
 | JS       | `MailboxProcessor` (Fable) | Promises                   |
 | BEAM     | Native process             | Erlang processes + mailbox |
 
-On non-BEAM targets, `Actor<'Msg>` is a thin wrapper around `MailboxProcessor<'Msg>`. No platform-specific runtime needed — Fable's built-in `MailboxProcessor` handles everything. On BEAM, actors map to real Erlang processes with native supervision.
+Non-BEAM actors use `MailboxProcessor` with an owned cooperative lifetime.
+BEAM actors use native processes, links, and monitors.
 
 ### API
 
-|                  Function                  |                     Description                      |
+| Function                                   | Description                                          |
 | ------------------------------------------ | ---------------------------------------------------- |
 | `spawn body`                               | Spawn an actor: `spawn (fun inbox -> actor { ... })` |
+| `spawnWithToken token body`                | Spawn with an external cancellation token            |
 | `spawnLinked parent body`                  | Spawn a linked child actor (EXIT on crash)           |
 | `spawnSupervised parent strategy body`     | Spawn a child with supervision (auto-restart)        |
-| `handleChildExit parent supervised exited` | Return a replacement child or `Stopped`             |
+| `handleChildExit parent supervised exited` | Return a replacement child or `Stopped`              |
 | `tryAsChildExited msg`                     | Check if a message is a `ChildExited` notification   |
 | `start state handler`                      | Stateful actor with message handler loop             |
 | `send actor msg`                           | Fire-and-forget message send                         |
 | `cast actor msg`                           | Fire-and-forget to a call-capable actor              |
 | `call actor msg`                           | Async request-response (returns `ActorOp<'Reply>`)   |
+| `callAsync actor msg`                      | Request-response from an Async expression            |
+| `callResult ms token actor msg`            | Bounded call with an explicit result                 |
+| `callResultAsync ms token actor msg`       | Bounded result from an Async expression              |
 | `callWithTimeout ms actor msg`             | Like `call` but raises `TimeoutException` on expiry  |
-| `kill actor`                               | Kill an actor immediately                            |
+| `callAsyncWithTimeout ms actor msg`        | Bounded reply from an Async expression               |
+| `kill actor`                               | Request actor shutdown                               |
+| `stop ms actor` / `stopAsync ms actor`     | Request shutdown and await observed exit             |
 | `trapExits ()`                             | Enable supervision (EXIT signals become messages)    |
 | `schedule ms callback`                     | Schedule a timer callback                            |
 | `cancelTimer timer`                        | Cancel a scheduled timer                             |
+
+### Shutdown and bounded calls
+
+Deadlines are positive milliseconds, validated before sending a request or
+starting shutdown.
+
+`stop`/`stopAsync` return `Completed exit` or `TimedOut`; cleanup failures appear
+as `ActorExit.Failed`. On .NET, JS, and Python, cancellation wakes idle receives
+and stops cooperative work. Completion observes workflow, actor-expression
+cleanup, and owned-child exit. Repeated stops share cleanup; a timeout leaves
+unfinished work owned. On BEAM, stop confirms native process death and skips
+finalizers. Await each current worker if disposal must confirm the whole tree
+has exited.
+
+Linked children stop on any parent exit, including normal completion. Child
+crashes notify emulated parents; BEAM retains native link/trap-exit behavior.
+Keep replacement children returned by `handleChildExit`.
+
+`callResult`/`callResultAsync` return `Reply`, `TimedOut`, `TargetTerminated`, or
+`Cancelled`. Existing `call`/`callAsync` deadlines remain unbounded, but target
+termination and caller cancellation now settle their waits. Calls settle once
+and ignore late replies. Timeout and cancellation do not undo delivered work;
+requests are never automatically retried. Await replies to preserve backpressure.
+
+For subscription disposal, close upstream admission, cancel the token used by
+pending calls, then await stop and inspect its result. Emulated calls settle
+when shutdown closes admission; that notification alone does not confirm exit.
+
+**Compatibility:** emulated handles now come from spawn APIs rather than record
+literals. Timeout calls deliver when run. Arbitrary supplied Async keeps its
+runtime semantics: Python 5.19 Async.Sleep can retain cancelled callbacks until
+their deadline. Source `TODO(upstream)` comments identify removable adapters.
 
 ### Design Principles
 
