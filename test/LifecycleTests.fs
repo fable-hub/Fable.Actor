@@ -127,8 +127,10 @@ let tests =
     testList (
         "Lifecycle",
         [
+            // decision: gives the 10000-message workload its own deadline because stack safety does not imply CI throughput
             testAsync (
                 "immediate receives preserve a bounded message-loop stack",
+                timeout 15000,
                 fun _ ->
                     toAsync (
                         actor {
@@ -150,7 +152,7 @@ let tests =
                                     inbox.Post 10000
                                     loop ())
 
-                            do! await 1 doneEvents
+                            let! _ = Actor.callWithTimeout 10000 doneEvents (Await 1)
                             do! observeExit worker
                             let! result = Actor.stop 2000 worker
 #if FABLE_COMPILER_BEAM
