@@ -129,6 +129,19 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     // Retire both only after published JS/Python Receive wakes and cancels correctly;
     // https://github.com/fable-compiler/Fable/pull/5038 documents this remaining mailbox gap.
     member _.Receive() : Async<'Msg> =
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
+        // decision: reuses the workflow trampoline so recursive immediately completed receives remain stack safe
+        Lifetime.withContextRun (fun ((ok, error, cancelled), _) run ->
+            run
+                (mb.Receive())
+                ((fun msg ->
+                    if cts.IsCancellationRequested then
+                        cancelled (System.OperationCanceledException())
+                    else
+                        ok msg),
+                 error,
+                 cancelled))
+#else
         Async.FromContinuations(fun (ok, error, cancelled) ->
             Async.StartWithContinuations(
                 mb.Receive(),
@@ -141,6 +154,7 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
                 cancelled,
                 cts.Token
             ))
+#endif
 
     /// Queue a message while the actor accepts work.
     ///
@@ -151,9 +165,14 @@ type ActorBuilder() =
     // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
     // Revisit the extra delayed binder and Lifetime.guard calls after portable Bind/Delay
     // stop on cancellation. Keep actor startup/late-callback cancellation regressions.
-    // decision: delays user binders so a cancelled portable continuation cannot execute user code before its next token check
+    // decision: delays portable user binders so a cancelled continuation cannot execute user code before its next token check
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
+#if FABLE_COMPILER
         async.Bind(op, fun value -> Lifetime.guard (fun () -> f value))
+#else
+        // invariant: resource-producing binders enter their finalizer before the next cancellation check
+        async.Bind(op, f)
+#endif
 
     member _.Return(value: 'T) : Async<'T> = async.Return(value)
     member _.ReturnFrom(op: Async<'T>) : Async<'T> = async.ReturnFrom(op)
@@ -178,7 +197,10 @@ type ActorBuilder() =
     ///
     /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
     member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
-        Lifetime.withContext (fun ((ok, error, cancelled), token) ->
+#if !FABLE_COMPILER
+        Lifetime.finallyNative body compensation
+#else
+        Lifetime.withContextRun (fun ((ok, error, cancelled), token) run ->
             let gate = Lifetime.newGate ()
             let mutable finished = false
 
@@ -207,11 +229,12 @@ type ActorBuilder() =
             if token.IsCancellationRequested then
                 finish cancelled (System.OperationCanceledException())
             else
-                Async.StartWithContinuations(body, finish ok, finish error, finish cancelled, token))
+                run body (finish ok, finish error, finish cancelled))
+#endif
 
     member this.Using(resource: 'a :> System.IDisposable, body: 'a -> Async<'T>) : Async<'T> =
         this.TryFinally(
-            body resource,
+            this.Delay(fun () -> body resource),
             fun () ->
                 if not (isNull (box resource)) then
                     resource.Dispose()
@@ -503,13 +526,28 @@ module Actor =
         lifetime.AddResource(Lifetime.cancellation token lifetime.RequestStop)
         attach inbox
 
-        Async.StartWithContinuations(
-            Lifetime.guard (fun () -> body inbox),
-            (fun () -> lifetime.Complete ActorExit.Normal),
-            (fun ex -> lifetime.Complete(ActorExit.Failed ex)),
-            (fun _ -> lifetime.Complete ActorExit.Cancelled),
-            cts.Token
-        )
+        let workflow = Lifetime.guard (fun () -> body inbox)
+
+        let start () =
+            Async.StartWithContinuations(
+                workflow,
+                (fun () -> lifetime.Complete ActorExit.Normal),
+                (fun ex -> lifetime.Complete(ActorExit.Failed ex)),
+#if FABLE_COMPILER
+                (fun _ -> lifetime.Complete ActorExit.Cancelled),
+#else
+                (fun ex -> lifetime.Complete(Lifetime.cancelledExit ex)),
+#endif
+                cts.Token
+            )
+
+#if FABLE_COMPILER
+        start ()
+#else
+        // decision: queues startup independently so synchronous actor work cannot block the spawning thread
+        System.Threading.ThreadPool.QueueUserWorkItem(fun _ -> start ())
+        |> ignore
+#endif
 
         inbox
 

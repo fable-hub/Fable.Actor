@@ -118,13 +118,28 @@ let timerCancel (timer: obj) : unit =
 ///
 /// decision: uses an ownership watcher because native links alone leave children alive after normal parent exit
 /// invariant: the watcher exits when either endpoint dies and kills the child on every parent death
+/// invariant: the supplied parent link exists before the child handle is returned while both endpoints remain alive
+/// decision: uses atomic spawn_link for the caller and a monitored startup handshake for a different supplied parent
 let spawnOwnedProcess (parent: Pid<'Parent>) (body: unit -> unit) : Pid<'Msg> =
     emitErlExpr
         (parent, body)
         """
     (fun() ->
         Parent = $0,
-        Child = spawn(fun() -> link(Parent), $1(ok) end),
+        Caller = self(),
+        Child = case Parent =:= Caller of
+            true -> spawn_link(fun() -> $1(ok) end);
+            false ->
+                Ready = make_ref(),
+                {Pid, M} = spawn_monitor(fun() ->
+                    link(Parent), Caller ! {Ready, self()}, $1(ok)
+                end),
+                receive
+                    {Ready, Pid} -> demonitor(M, [flush]);
+                    {'DOWN', M, process, Pid, _} -> ok
+                end,
+                Pid
+        end,
         spawn(fun() ->
             PM = monitor(process, Parent), CM = monitor(process, Child),
             receive
@@ -243,18 +258,54 @@ let endCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) : unit =
 
 #endif
 
-#if FABLE_COMPILER_PYTHON
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
 
-/// Build a context-aware Async without the upstream cancellation fall-through wrapper.
+open Fable.Core
+
+/// Build a context-aware Async without a preceding cancellation checkpoint.
 ///
 /// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
 /// and https://github.com/fable-compiler/Fable/pull/5038
-/// Delete this raw-context adapter when Lifetime.withContext uses standard Async on Python.
+/// Delete the Python branch when Lifetime.withContext uses standard Async on Python.
+/// TODO(upstream): retire the JS branch once native TryFinally installs compensation
+/// before checking cancellation; the resource-acquisition regressions must still pass.
 ///
-/// decision: hands cancellation to the actor settlement gate because fable-library 5.19 protected_cont continues after on_cancel
+/// decision: hands cancellation to the actor settlement gate so acquired resources receive cleanup even when their token is already cancelled
+#if FABLE_COMPILER_PYTHON
 [<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]
+#else
+[<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken])")>]
+#endif
 let fromContext
     (body: (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken -> unit)
+    : Async<'T> =
+    nativeOnly
+
+#endif
+
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
+
+/// Run a nested Async using the incoming trampoline and guarded continuations.
+///
+/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
+/// Delete the Python branch with the guard/finalizer adapters once native Delay/Bind
+/// and TryFinally preserve cancellation and exactly-once cleanup, and Receive uses
+/// the native mailbox workflow without a separate async root.
+/// TODO(upstream): retire the JS branch when native TryFinally installs cleanup before
+/// cancellation and Receive honors owned cancellation without its current wrapper.
+///
+/// decision: preserves the incoming trampoline so immediately completed actor steps still yield before exhausting the stack
+/// invariant: terminal continuation chains also yield through the shared trampoline
+#if FABLE_COMPILER_PYTHON
+[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token), lambda op: lambda cs: op(ctx.__class__(ctx.trampoline, ctx.cancel_token, *(lambda value, next=next: ctx.trampoline.run(lambda: next(value)) for next in cs))))")>]
+#else
+[<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken], op => cs => { const callbacks = cs.map(next => value => { const resume = () => next(value); if (ctx.trampoline.incrementAndCheck()) ctx.trampoline.hijack(resume); else resume(); }); op({...ctx, onSuccess: callbacks[0], onError: callbacks[1], onCancel: callbacks[2]}); })")>]
+#endif
+let fromContextWithRun
+    (body:
+        (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken
+            -> (Async<'T> -> (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) -> unit)
+            -> unit)
     : Async<'T> =
     nativeOnly
 

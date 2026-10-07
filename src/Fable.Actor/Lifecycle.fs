@@ -29,11 +29,12 @@ module internal Lifetime =
 #endif
 
     let withContext body : Async<'T> =
-#if FABLE_COMPILER_PYTHON
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
         // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
         // and https://github.com/fable-compiler/Fable/pull/5038
-        // Use the ordinary Async.CancellationToken/FromContinuations branch after unit
-        // continuations and terminal cancellation are fixed; then delete Platform.fromContext.
+        // Retire the Python adapter after unit continuations and terminal cancellation are fixed.
+        // TODO(upstream): native JS TryFinally also checks cancellation before installing
+        // compensation. Retire this adapter only when cancelled resource acquisition disposes.
         Platform.fromContext body
 #else
         async {
@@ -42,12 +43,58 @@ module internal Lifetime =
         }
 #endif
 
+    let withContextRun body : Async<'T> =
+#if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
+        Platform.fromContextWithRun body
+#else
+        withContext (fun (continuations, token) ->
+            body (continuations, token) (fun op (ok, error, cancelled) -> Async.StartWithContinuations(op, ok, error, cancelled, token)))
+#endif
+
+#if !FABLE_COMPILER
+    let private cleanupFailureKey = obj ()
+
+    // decision: carries cleanup failure on the cancellation signal because .NET TryCancelled preserves cancellation even when its callback throws
+    let private recordCleanupFailure (cancelled: OperationCanceledException) failure =
+        cancelled.Data[cleanupFailureKey] <- failure
+
+    let cancelledExit (cancelled: OperationCanceledException) =
+        match cancelled.Data[cleanupFailureKey] with
+        | :? exn as failure -> ActorExit.Failed failure
+        | _ -> ActorExit.Cancelled
+
+    // invariant: cancellation cleanup is installed before any ambient cancellation checkpoint
+    // decision: uses .NET's cancellation handler for cancellation and explicit continuations for other exits to preserve cleanup failures
+    let finallyNative (body: Async<'T>) compensation =
+        Async.TryCancelled(
+            withContext (fun ((ok, error, cancelled), token) ->
+                let finish next value =
+                    let failure =
+                        try
+                            compensation ()
+                            None
+                        with ex ->
+                            Some ex
+
+                    match failure with
+                    | Some ex -> error ex
+                    | None -> next value
+
+                Async.StartWithContinuations(body, finish ok, finish error, cancelled, token)),
+            fun cancelled ->
+                try
+                    compensation ()
+                with ex ->
+                    recordCleanupFailure cancelled ex
+        )
+#endif
+
     let guard (expression: unit -> Async<'T>) : Async<'T> =
 #if FABLE_COMPILER_PYTHON
         // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
         // Collapse this Python guard to async.Delay after cancelled Delay/Bind no longer
         // run user work or receive a second terminal callback from a cancelled delay.
-        withContext (fun ((ok, error, cancelled), token) ->
+        withContextRun (fun ((ok, error, cancelled), token) run ->
             let gate = newGate ()
             let mutable finished = false
 
@@ -74,7 +121,7 @@ module internal Lifetime =
 
                 match operation with
                 | Choice2Of2 ex -> finish error ex
-                | Choice1Of2 op -> Async.StartWithContinuations(op, finish ok, finish error, finish cancelled, token))
+                | Choice1Of2 op -> run op (finish ok, finish error, finish cancelled))
 #else
         async.Delay expression
 #endif
@@ -270,7 +317,8 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
     // invariant: delivery and admission closure are serialized so Post cannot race mailbox disposal
     member _.Post(deliver: unit -> unit) =
         Lifetime.synchronize gate (fun () ->
-            if not stopping then
+            // decision: checks the owned token because callers can cancel the public CTS without requesting lifecycle shutdown
+            if not stopping && not cts.IsCancellationRequested then
                 deliver ())
 
     /// Observe closure of request admission, independently of descendant cleanup.

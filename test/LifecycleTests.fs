@@ -127,6 +127,170 @@ let tests =
     testList (
         "Lifecycle",
         [
+            testAsync (
+                "immediate receives preserve a bounded message-loop stack",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let doneEvents = barrier ()
+
+                            let worker: Actor<int> =
+                                Actor.spawn (fun inbox ->
+                                    let rec loop () =
+                                        actor {
+                                            let! remaining = inbox.Receive()
+
+                                            if remaining = 0 then
+                                                Actor.cast doneEvents Signal
+                                            else
+                                                inbox.Post(remaining - 1)
+                                                return! loop ()
+                                        }
+
+                                    inbox.Post 10000
+                                    loop ())
+
+                            do! await 1 doneEvents
+                            do! observeExit worker
+                            let! result = Actor.stop 2000 worker
+#if FABLE_COMPILER_BEAM
+                            assertThat (completed result) isTrue
+#else
+                            assertThat result (isEqualTo (StopResult.Completed ActorExit.Normal))
+#endif
+                            let! _ = Actor.stop 2000 doneEvents
+                            return ()
+                        }
+                    )
+            )
+#if !FABLE_COMPILER
+            testAsync (
+                "spawn returns while the child waits synchronously for its caller",
+                fun _ ->
+                    async {
+                        use release = new ManualResetEventSlim(false)
+                        let mutable released = false
+
+                        let worker: Actor<int> =
+                            Actor.spawn (fun _ -> actor { released <- release.Wait 2000 })
+
+                        release.Set()
+                        do! observeExit worker
+                        assertThat released isTrue
+                    }
+            )
+            testAsync (
+                "a resource-producing bind installs disposal before cancellation",
+                fun _ ->
+                    async {
+                        let cleaned = barrier ()
+
+                        let worker: Actor<int> =
+                            Actor.spawn (fun inbox ->
+                                actor {
+                                    let! resource =
+                                        Async.FromContinuations(fun (ok, _, _) ->
+                                            let resource = {
+                                                new System.IDisposable with
+                                                    member _.Dispose() = Actor.cast cleaned Signal
+                                            }
+
+                                            Actor.kill inbox
+                                            ok resource)
+
+                                    use _resource = resource
+                                    return ()
+                                })
+
+                        do! observeExit worker
+                        let! result = Actor.stop 2000 worker
+                        assertThat result (isEqualTo (StopResult.Completed ActorExit.Cancelled))
+                        let! count = Actor.call cleaned Read
+                        assertThat count (isEqualTo 1)
+                        let! _ = Actor.stop 2000 cleaned
+                        return ()
+                    }
+            )
+#endif
+#if FABLE_COMPILER_BEAM
+            testAsync (
+                "linked child is linked before its handle is returned",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let noticed = barrier ()
+
+                            let parent: Actor<obj> =
+                                Actor.spawn (fun inbox ->
+                                    actor {
+                                        Actor.trapExits ()
+                                        let priority = highPriority ()
+
+                                        try
+                                            for _ in 1..100 do
+                                                let child: Actor<int> =
+                                                    Actor.spawnLinked inbox (fun child -> actor { let! _ = child.Receive() in return () })
+
+                                                assertThat (isLinked child) isTrue
+                                                Actor.kill child
+                                                let! msg = inbox.Receive()
+
+                                                match Actor.tryAsChildExited msg with
+                                                | Some _ -> ()
+                                                | None -> failwith "Immediate child kill did not notify its parent"
+
+                                            Actor.cast noticed Signal
+                                        finally
+                                            restorePriority priority
+                                    })
+
+                            do! await 1 noticed
+                            do! observeExit parent
+                            let! _ = Actor.stop 2000 noticed
+                            return ()
+                        }
+                    )
+            )
+            testAsync (
+                "a child is linked to a supplied parent other than the spawning caller",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let started, noticed = barrier (), barrier ()
+
+                            let parent: Actor<obj> =
+                                Actor.spawn (fun inbox ->
+                                    actor {
+                                        Actor.trapExits ()
+                                        Actor.cast started Signal
+                                        let! msg = inbox.Receive()
+
+                                        match Actor.tryAsChildExited msg with
+                                        | Some _ -> Actor.cast noticed Signal
+                                        | None -> failwith "Missing supplied-parent notification"
+                                    })
+
+                            do! await 1 started
+                            let priority = highPriority ()
+
+                            let child: Actor<int> =
+                                try
+                                    Actor.spawnLinked parent (fun inbox -> actor { let! _ = inbox.Receive() in return () })
+                                finally
+                                    restorePriority priority
+
+                            assertThat (isLinkedTo parent child) isTrue
+                            Actor.kill child
+                            do! await 1 noticed
+                            do! observeExit parent
+                            do! observeExit child
+                            let! _ = Actor.stop 2000 started
+                            let! _ = Actor.stop 2000 noticed
+                            return ()
+                        }
+                    )
+            )
+#endif
             testAsync ("normal linked child exit is silent", fun _ -> toAsync (linkExitCase false))
             testAsync ("cancelled child exit follows the target link contract", fun _ -> toAsync (linkExitCase true))
             testAsync (
@@ -392,6 +556,104 @@ let tests =
                     )
             )
 #if !FABLE_COMPILER_BEAM
+            testAsync (
+                "cancellation during resource acquisition still disposes once",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let cleaned = barrier ()
+
+                            let worker: Actor<int> =
+                                Actor.spawn (fun inbox ->
+                                    actor {
+                                        use _resource =
+                                            let resource = {
+                                                new System.IDisposable with
+                                                    member _.Dispose() = Actor.cast cleaned Signal
+                                            }
+
+                                            Actor.kill inbox
+                                            resource
+
+                                        failwith "Cancelled resource body ran"
+                                    })
+
+                            do! observeExit worker
+                            let! result = Actor.stop 2000 worker
+                            assertThat result (isEqualTo (StopResult.Completed ActorExit.Cancelled))
+                            let! count = Actor.call cleaned Read
+                            assertThat count (isEqualTo 1)
+                            let! _ = Actor.stop 2000 cleaned
+                            return ()
+                        }
+                    )
+            )
+            testAsync (
+                "cleanup failure during cancelled acquisition is reported",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let worker: Actor<int> =
+                                Actor.spawn (fun inbox ->
+                                    actor {
+                                        use _resource =
+                                            let resource = {
+                                                new System.IDisposable with
+                                                    member _.Dispose() = failwith "acquisition cleanup failed"
+                                            }
+
+                                            Actor.kill inbox
+                                            resource
+
+                                        return ()
+                                    })
+
+                            do! observeExit worker
+                            let! result = Actor.stop 2000 worker
+
+                            match result with
+                            | StopResult.Completed(ActorExit.Failed ex) -> assertThat ex.Message (isEqualTo "acquisition cleanup failed")
+                            | other -> failwithf "Acquisition cleanup failure was lost: %A" other
+                        }
+                    )
+            )
+            testAsync (
+                "direct owned cancellation rejects posts while work remains suspended",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let started = barrier ()
+                            let releaseHandle = reporter None
+
+                            let worker: Actor<int> =
+                                Actor.spawn (fun _ ->
+                                    actor {
+                                        let! _ =
+                                            Async.FromContinuations(fun (ok, _, _) ->
+                                                Actor.cast releaseHandle (Some(Some(fun () -> ok 1)))
+                                                Actor.cast started Signal)
+
+                                        return ()
+                                    })
+
+                            do! await 1 started
+                            worker.Cts.Cancel()
+                            let before = mailboxLength worker
+
+                            for message in 1..100 do
+                                worker.Post message
+
+                            assertThat (mailboxLength worker) (isEqualTo before)
+                            let! release = Actor.call releaseHandle None
+                            Option.get release ()
+                            do! observeExit worker
+                            let! _ = Actor.stop 2000 worker
+                            let! _ = Actor.stop 2000 releaseHandle
+                            let! _ = Actor.stop 2000 started
+                            return ()
+                        }
+                    )
+            )
             testAsync (
                 "noncooperative work times out and remains owned until release",
                 fun _ ->

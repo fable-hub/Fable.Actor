@@ -32,6 +32,22 @@ module Helpers =
     [<Emit("length(element(2, process_info(self(), monitors)))")>]
     let monitorCount () : int = nativeOnly
 
+    [<Emit("process_flag(priority, high)")>]
+    let highPriority () : obj = nativeOnly
+
+    [<Emit("process_flag(priority, $0), ok")>]
+    let restorePriority (priority: obj) : unit = nativeOnly
+
+    [<Emit("lists:member($0, element(2, process_info(self(), links)))")>]
+    let private linkedPid (pid: Fable.Beam.Pid<'Msg>) : bool = nativeOnly
+
+    let isLinked (target: Actor<'Msg>) = linkedPid target.Pid
+
+    [<Emit("lists:member($1, element(2, process_info($0, links)))")>]
+    let private linkedToPid (parent: Fable.Beam.Pid<'Parent>) (child: Fable.Beam.Pid<'Msg>) : bool = nativeOnly
+
+    let isLinkedTo (parent: Actor<'Parent>) (child: Actor<'Msg>) = linkedToPid parent.Pid child.Pid
+
     [<Emit("(fun() -> ObservedPid = $0, M = monitor(process, ObservedPid), receive {'DOWN', M, process, ObservedPid, _} -> true after 2000 -> demonitor(M, [flush]), false end end)()")>]
     let private observedDeath (pid: Fable.Beam.Pid<'Msg>) : bool = nativeOnly
 
@@ -58,13 +74,26 @@ module Helpers =
 #else
 
 #if FABLE_COMPILER_PYTHON
+    [<Emit("$0.messages.qsize()")>]
+    let private mailboxQueueLength (mailbox: MailboxProcessor<'Msg>) : int = nativeOnly
+
     [<Emit("len($0.listeners)")>]
     let tokenListenerCount (token: System.Threading.CancellationToken) : int = nativeOnly
 #else
 #if FABLE_COMPILER_JAVASCRIPT
+    [<Emit("(function(q) { let n = 0; while (q) { n++; q = q.next; } return n; })($0.messages.firstAndLast?.[0])")>]
+    let private mailboxQueueLength (mailbox: MailboxProcessor<'Msg>) : int = nativeOnly
+
     [<Emit("$0._listeners.size")>]
     let tokenListenerCount (token: System.Threading.CancellationToken) : int = nativeOnly
 #endif
+#endif
+
+    let mailboxLength (target: Actor<'Msg>) =
+#if FABLE_COMPILER
+        mailboxQueueLength target.Mb
+#else
+        target.Mb.CurrentQueueLength
 #endif
 
     /// Observe workflow and descendant exit without requesting shutdown.
