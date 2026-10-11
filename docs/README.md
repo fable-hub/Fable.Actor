@@ -9,6 +9,9 @@ Read the guides in order, or jump to the feature you need.
 | 3 | [Supervision](supervision.md) | Own linked children and choose recovery policies |
 | 4 | [Lifetimes](lifetimes.md) | Opt into cooperative shutdown and retained outcomes |
 
+For state handlers that return finite work descriptions, see
+[Optional actor commands](commands.md).
+
 The library is experimental.
 
 For target differences, see [Platform notes](platforms.md). To build the repo,

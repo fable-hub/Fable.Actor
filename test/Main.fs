@@ -20,4 +20,5 @@ let main _ =
         LifecycleTests.tests
         CallLivenessTests.tests
         CooperativeTests.tests
+        CommandTests.tests
     ]

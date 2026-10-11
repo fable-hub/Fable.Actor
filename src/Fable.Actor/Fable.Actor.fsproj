@@ -19,6 +19,8 @@
     <Compile Include="Actor.fs" />
     <Compile Include="LifetimesNative.fs" />
     <Compile Include="Lifetimes.fs" />
+    <Compile Include="Commands.fs" />
+    <Compile Include="CommandActor.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="*.fsproj; *.fs; *.fsi" PackagePath="fable\" />
