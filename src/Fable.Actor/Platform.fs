@@ -170,48 +170,6 @@ let stopProcess (pid: Pid<'Msg>) (deadline: int) : bool =
 
 #endif
 
-#if FABLE_COMPILER_PYTHON
-
-open Fable.Core
-
-// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5036
-// Replace addCancellationListener/removeCancellationListener/cancellationGate with the
-// public disposable token.Register API when Lifetime.cancellation retires its Python branch.
-// decision: uses native registration handles because fable-library 5.19 Register omits its return value
-// decision: replaces the listener dictionary on removal so disposal during Cancel does not mutate its live iterator
-// invariant: removing an actor registration leaves other token listeners installed
-[<Emit("$0.add_listener($1)")>]
-let addCancellationListener (token: System.Threading.CancellationToken) (callback: unit -> unit) : int = nativeOnly
-
-[<Emit("setattr($0, 'listeners', {k: v for k, v in $0.listeners.items() if k != $1})")>]
-let removeCancellationListener (token: System.Threading.CancellationToken) (id: int) : unit = nativeOnly
-
-// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5035
-// Delete newGate/enterGate/leaveGate when Lifetime.synchronize uses the fixed runtime lock.
-[<Emit("__import__('threading').RLock()")>]
-let newGate () : obj = nativeOnly
-
-[<Emit("$0.acquire()")>]
-let enterGate (gate: obj) : unit = nativeOnly
-
-[<Emit("$0.release()")>]
-let leaveGate (gate: obj) : unit = nativeOnly
-
-[<Emit("$0.lock")>]
-let cancellationGate (token: System.Threading.CancellationToken) : obj = nativeOnly
-
-// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
-// Delete startDeadline/cancelDeadline after Lifetime.deadline uses fixed Async.Sleep;
-// retain positive deadlines and disposal of the actor-owned timer on every settlement.
-// decision: retains the asyncio timer handle so settlement cancels the timer rather than only suppressing its callback
-[<Emit("__import__('asyncio').get_running_loop().call_later($0 / 1000, $1)")>]
-let startDeadline (ms: int) (callback: unit -> unit) : obj = nativeOnly
-
-[<Emit("$0.cancel()")>]
-let cancelDeadline (handle: obj) : unit = nativeOnly
-
-#endif
-
 #if FABLE_COMPILER_BEAM
 
 let exitReason (reason: obj) : ActorExit =
@@ -264,15 +222,13 @@ open Fable.Core
 
 /// Build a context-aware Async without a preceding cancellation checkpoint.
 ///
-/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
-/// and https://github.com/fable-compiler/Fable/pull/5038
-/// Delete the Python branch when Lifetime.withContext uses standard Async on Python.
-/// TODO(upstream): retire the JS branch once native TryFinally installs compensation
-/// before checking cancellation; the resource-acquisition regressions must still pass.
+/// TODO(upstream): retire the JS/Python branches only when native TryFinally installs
+/// compensation before its cancellation checkpoint and actor cleanup failures remain observable.
 ///
 /// decision: hands cancellation to the actor settlement gate so acquired resources receive cleanup even when their token is already cancelled
 #if FABLE_COMPILER_PYTHON
-[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]
+// invariant: an erased F# unit success supplies None to the Python context callback
+[<Fable.Core.Emit("lambda ctx: $0(((lambda value=None: ctx.on_success(value), ctx.on_error, ctx.on_cancel), ctx.cancel_token))")>]
 #else
 [<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken])")>]
 #endif
@@ -287,17 +243,14 @@ let fromContext
 
 /// Run a nested Async using the incoming trampoline and guarded continuations.
 ///
-/// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
-/// Delete the Python branch with the guard/finalizer adapters once native Delay/Bind
-/// and TryFinally preserve cancellation and exactly-once cleanup, and Receive uses
-/// the native mailbox workflow without a separate async root.
-/// TODO(upstream): retire the JS branch when native TryFinally installs cleanup before
-/// cancellation and Receive honors owned cancellation without its current wrapper.
+/// TODO(upstream): retire these context adapters when native mailbox cancellation and
+/// finalizers meet the actor contract without creating a separate Async trampoline.
 ///
 /// decision: preserves the incoming trampoline so immediately completed actor steps still yield before exhausting the stack
 /// invariant: terminal continuation chains also yield through the shared trampoline
 #if FABLE_COMPILER_PYTHON
-[<Fable.Core.Emit("lambda ctx: $0(((ctx.on_success, ctx.on_error, ctx.on_cancel), ctx.cancel_token), lambda op: lambda cs: op(ctx.__class__(ctx.trampoline, ctx.cancel_token, *(lambda value, next=next: ctx.trampoline.run(lambda: next(value)) for next in cs))))")>]
+// invariant: an erased F# unit success supplies None to the Python context callback
+[<Fable.Core.Emit("lambda ctx: $0(((lambda value=None: ctx.on_success(value), ctx.on_error, ctx.on_cancel), ctx.cancel_token), lambda op: lambda cs: op(ctx.__class__(ctx.trampoline, ctx.cancel_token, *(lambda value=None, next=next: ctx.trampoline.run(lambda: next(value)) for next in cs))))")>]
 #else
 [<Fable.Core.Emit("ctx => $0([[ctx.onSuccess, ctx.onError, ctx.onCancel], ctx.cancelToken], op => cs => { const callbacks = cs.map(next => value => { const resume = () => next(value); if (ctx.trampoline.incrementAndCheck()) ctx.trampoline.hijack(resume); else resume(); }); op({...ctx, onSuccess: callbacks[0], onError: callbacks[1], onCancel: callbacks[2]}); })")>]
 #endif

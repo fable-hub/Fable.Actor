@@ -559,6 +559,18 @@ let tests =
             )
 #if !FABLE_COMPILER_BEAM
             testAsync (
+                "pre-cancelled lifetime registration invokes its callback once",
+                fun _ ->
+                    async {
+                        use source = new CancellationTokenSource()
+                        source.Cancel()
+                        let mutable calls = 0
+                        use registration = Lifetime.cancellation source.Token (fun () -> calls <- calls + 1)
+                        source.Cancel()
+                        assertThat calls (isEqualTo 1)
+                    }
+            )
+            testAsync (
                 "cancellation during resource acquisition still disposes once",
                 fun _ ->
                     toAsync (
@@ -632,7 +644,7 @@ let tests =
                                     actor {
                                         let! _ =
                                             Async.FromContinuations(fun (ok, _, _) ->
-                                                Actor.cast releaseHandle (Some(Some(fun () -> ok 1)))
+                                                Actor.cast releaseHandle (Some(Some(fun () -> ok ())))
                                                 Actor.cast started Signal)
 
                                         return ()
@@ -670,9 +682,7 @@ let tests =
                                         try
                                             let! _ =
                                                 Async.FromContinuations(fun (ok, _, _) ->
-                                                    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
-                                                    // Use ok () after the unit-continuation fix; keep the release barrier.
-                                                    Actor.cast releaseHandle (Some(Some(fun () -> ok 1)))
+                                                    Actor.cast releaseHandle (Some(Some(fun () -> ok ())))
                                                     Actor.cast started Signal)
 
                                             return ()
@@ -751,14 +761,12 @@ let tests =
                                         try
                                             let! _ =
                                                 Async.FromContinuations(fun (ok, _, cancelled) ->
-                                                    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5037
-                                                    // Use a unit success payload after the fix; keep the duplicate-callback probe.
                                                     Actor.cast
                                                         callbacks
                                                         (Some(
                                                             Some(
                                                                 (fun () -> cancelled (System.OperationCanceledException())),
-                                                                (fun () -> ok 1)
+                                                                (fun () -> ok ())
                                                             )
                                                         ))
 
