@@ -1,12 +1,19 @@
 ---
-last_commit_released: 76f7dc3eb1ca49de7c7fb464ee8faed22c5b052e
+last_commit_released: 6d6b352cb08e8efd3dce5eaf6784ab5ae3ab84c4
 name: Fable.Actor
-force_version: 5.0.0-rc.14
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.14 - 2026-10-12
+
+### 🐞 Bug Fixes
+
+* Release upstream async runtime fixes (#75) ([6d6b352](https://github.com/fable-hub/Fable.Actor/commit/6d6b352cb08e8efd3dce5eaf6784ab5ae3ab84c4))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/76f7dc3eb1ca49de7c7fb464ee8faed22c5b052e..6d6b352cb08e8efd3dce5eaf6784ab5ae3ab84c4)</small></strong>
 
 ## 5.0.0-rc.13 - 2026-10-07
 
