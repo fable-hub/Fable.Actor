@@ -160,13 +160,17 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
 
     member _.IsStopping = Lifetime.synchronize gate (fun () -> stopping)
 
+    member _.IsCompleted = Lifetime.synchronize gate (fun () -> result.IsSome)
+
     member _.ObserverCount =
         Lifetime.synchronize gate (fun () -> observers.Count + terminationObservers.Count)
 
     member _.ChildCount = Lifetime.synchronize gate (fun () -> children.Count)
 
     member private _.RecordFailure(ex: exn) =
-        Lifetime.synchronize gate (fun () -> failure <- Some ex)
+        Lifetime.synchronize gate (fun () ->
+            if failure.IsNone then
+                failure <- Some ex)
 
     member private _.Publish() =
         let notification =
@@ -178,9 +182,11 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
                     && children.Count = 0
                     ->
                     let outcome =
-                        match failure with
-                        | Some ex -> ActorExit.Failed ex
-                        | None -> exit
+                        // decision: retains the original body defect before any descendant cleanup defect
+                        match exit, failure with
+                        | ActorExit.Failed _, _ -> exit
+                        | _, Some ex -> ActorExit.Failed ex
+                        | _, None -> exit
 
                     result <- Some outcome
                     let callbacks = observers.Values |> Seq.toArray
@@ -304,19 +310,26 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
             Lifetime.synchronize gate (fun () -> completing <- false)
             this.Publish()
 
-    member this.Own(child: ActorLifetime) =
+    member this.Own(child: ActorLifetime, retainFailure: bool) =
         let id, stop =
             Lifetime.synchronize gate (fun () ->
+                // invariant: no descendant can join after terminal publication
+                if result.IsSome then
+                    invalidOp "Actor parent has already exited"
+
                 nextId <- nextId + 1
                 children.Add(nextId, child)
                 nextId, stopping)
 
         child.Observe(fun exit ->
-            match exit with
-            | ActorExit.Failed ex when this.IsStopping -> this.RecordFailure ex
-            | _ -> ()
+            // invariant: retained failure and ownership removal are serialized before terminal publication
+            Lifetime.synchronize gate (fun () ->
+                match exit with
+                | ActorExit.Failed ex when (retainFailure || stopping) && failure.IsNone -> failure <- Some ex
+                | _ -> ()
 
-            Lifetime.synchronize gate (fun () -> children.Remove id |> ignore)
+                children.Remove id |> ignore)
+
             this.Publish())
         |> ignore
 

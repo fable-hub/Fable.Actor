@@ -123,10 +123,45 @@ let linkExitCase cancelChild =
         return ()
     }
 
+#if !FABLE_COMPILER_BEAM
+let private handledFailureIsNotRetained () =
+    actor {
+        let handled = barrier ()
+
+        let parent: Actor<obj> =
+            Actor.spawn (fun parent ->
+                actor {
+                    let _child: Actor<unit> =
+                        Actor.spawnLinked parent (fun _ -> actor { failwith "handled legacy child failure" })
+
+                    let! message = parent.Receive()
+                    assertThat (Actor.tryAsChildExited message).IsSome isTrue
+                    Actor.cast handled Signal
+                    let! _ = parent.Receive()
+                    return ()
+                })
+
+        do! await 1 handled
+        Actor.send parent (box "complete")
+        do! observeExit parent
+        let! result = Actor.stop 2000 parent
+        assertThat result (isEqualTo (StopResult.Completed ActorExit.Normal))
+        let! _ = Actor.stop 2000 handled
+        ()
+    }
+#endif
+
 let tests =
     testList (
         "Lifecycle",
         [
+#if !FABLE_COMPILER_BEAM
+            testAsync (
+                "legacy ownership permits handled child failure and normal parent exit",
+                timeout 5000,
+                fun _ -> toAsync (handledFailureIsNotRetained ())
+            )
+#endif
             // decision: gives the 10000-message workload its own deadline because stack safety does not imply CI throughput
             testAsync (
                 "immediate receives preserve a bounded message-loop stack",

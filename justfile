@@ -9,6 +9,9 @@ dev := "false"
 fable_repo := justfile_directory() / "../Fable"
 fable := if dev == "true" { "dotnet run --project " + fable_repo / "src/Fable.Cli" + " --" } else { "dotnet fable" }
 
+# decision: select the declared OTP and Rebar for both compilation and execution, including recipes entered from isolated worktrees
+beam := "mise exec --"
+
 src_path := "src/Fable.Actor"
 build_path := "build"
 test_path := "test"
@@ -27,7 +30,7 @@ clean:
 # Build F# to Erlang via Fable.Beam, then compile with rebar3
 build: clean
     {{fable}} src/Fable.Actor --exclude Fable.Core --lang beam --outDir apps/fable_actor --noCache
-    rebar3 compile
+    {{beam}} rebar3 compile
 
 # Build F# projects only (type check)
 check:
@@ -100,8 +103,8 @@ test-js:
 test-beam:
     rm -rf {{build_path}}/tests-beam
     {{fable}} {{test_path}} --exclude Fable.Core --lang beam --outDir {{build_path}}/tests-beam
-    cd {{build_path}}/tests-beam && rebar3 compile
-    cd {{build_path}}/tests-beam && erl -noshell -pa _build/default/lib/*/ebin -eval 'main:main([])'
+    cd {{build_path}}/tests-beam && {{beam}} rebar3 compile
+    cd {{build_path}}/tests-beam && {{beam}} erl -noshell -pa _build/default/lib/*/ebin -eval 'main:main([])'
 
 # --- Timeflies example ---
 
@@ -113,14 +116,14 @@ timeflies_app := timeflies_path / "apps/timeflies"
 build-timeflies: build
     {{fable}} {{timeflies_src}} --exclude Fable.Core --lang beam --outDir {{timeflies_app}} --noCache
     cp {{timeflies_src}}/erl/*.erl {{timeflies_app}}/src/
-    cd {{timeflies_path}} && rebar3 compile
+    cd {{timeflies_path}} && {{beam}} rebar3 compile
 
 # Run timeflies demo server on http://localhost:3000
 run-timeflies: build-timeflies
-    cd {{timeflies_path}} && erl \
+    cd {{timeflies_path}} && {{beam}} erl \
         -pa _build/default/lib/*/ebin \
         -noshell \
-        -eval "fable_actor_timeflies_app:start()" \
+        -eval "timeflies_app:start()" \
         -eval "receive stop -> ok end"
 
 # --- Timeflies Python example ---

@@ -108,7 +108,7 @@ let tests =
                     )
             )
             testAsync (
-                "unbounded callAsync reports handler death",
+                "unbounded asyncCall reports handler death",
                 fun _ ->
                     toAsync (
                         actor {
@@ -117,7 +117,7 @@ let tests =
                             let mutable failed = false
 
                             try
-                                let! _ = Actor.callAsync target Crash
+                                let! _ = Actor.asyncCall target Crash
                                 ()
                             with _ ->
                                 failed <- true
@@ -212,7 +212,7 @@ let tests =
                                 do! await (2 * n - 1) delivered
                                 let! oldReply = Actor.call held None
                                 Option.get oldReply |> fun rc -> rc.Reply 999
-                                let! fresh = Actor.callAsyncWithTimeout 2000 target (Echo n)
+                                let! fresh = Actor.asyncCallWithTimeout 2000 target (Echo n)
                                 assertThat fresh (isEqualTo n)
                                 Option.get oldReply |> fun rc -> rc.Reply 888
 #if FABLE_COMPILER_BEAM
@@ -297,7 +297,7 @@ let tests =
                             cts.Cancel()
                             let delivered, held, cancelledEvents = barrier (), reporter None, barrier ()
                             let target = worker delivered held
-                            let computation = Actor.callAsync target Hold
+                            let computation = Actor.asyncCall target Hold
 
                             let start () =
                                 Async.StartWithContinuations(
@@ -343,7 +343,7 @@ let tests =
 
                             let computation =
                                 async {
-                                    let! _ = Actor.callAsync target Hold
+                                    let! _ = Actor.asyncCall target Hold
                                     return 1
                                 }
 
@@ -379,7 +379,7 @@ let tests =
 #endif
                             let! oldReply = Actor.call held None
                             Option.get oldReply |> fun rc -> rc.Reply 88
-                            let! value = Actor.callAsyncWithTimeout 2000 target (Echo 3)
+                            let! value = Actor.asyncCallWithTimeout 2000 target (Echo 3)
                             assertThat value (isEqualTo 3)
                             let! _ = Actor.stop 2000 target
                             let! _ = Actor.stop 2000 delivered

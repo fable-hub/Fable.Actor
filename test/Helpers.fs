@@ -14,7 +14,7 @@ open Fable.Core
 [<AutoOpen>]
 module Helpers =
 
-    /// Counter protocol, shared by the call/reply and callAsync suites.
+    /// Counter protocol, shared by the call/reply and asyncCall suites.
     type CounterMsg =
         | Increment
         | Decrement

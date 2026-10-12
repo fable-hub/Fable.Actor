@@ -8,7 +8,8 @@
 //   actor.Post(msg)  — send a message (from outside)
 //
 // decision: presents one actor API while selecting native BEAM processes or MailboxProcessor at compile time
-// invariant: actors exchange state across process boundaries only through messages
+// invariant: application actor state crosses process boundaries only through messages
+// decision: cooperative cancellation uses runtime-shared tokens outside the application message protocol
 // tradeoff: maintains two runtime implementations to preserve each target's native concurrency semantics
 namespace Fable.Actor
 
@@ -38,32 +39,43 @@ type Actor<'Msg> = {
 } with
 
     member _.Receive() : ActorOp<'Msg> = {
-        Run = fun cont -> receiveMsg (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> ExecutionNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
     member this.Post(msg: 'Msg) = sendMsg this.Pid msg
 
 type ActorBuilder() =
     member _.Bind(op: ActorOp<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
-        Run = fun cont -> op.Run(fun value -> (f value).Run cont)
+        Run =
+            fun cont ->
+                op.Run(fun value ->
+                    ExecutionNative.checkpointValue (box value)
+                    (f value).Run cont)
     }
 
-    member _.Return(value: 'T) : ActorOp<'T> = { Run = fun cont -> cont value }
+    member _.Return(value: 'T) : ActorOp<'T> = {
+        Run =
+            fun cont ->
+                ExecutionNative.checkpointValue (box value)
+                cont value
+    }
+
     member _.ReturnFrom(op: ActorOp<'T>) : ActorOp<'T> = op
     member _.Zero() : ActorOp<unit> = { Run = fun cont -> cont () }
-    member _.Delay(f: unit -> ActorOp<'T>) : ActorOp<'T> = { Run = fun cont -> (f ()).Run cont }
+
+    member _.Delay(f: unit -> ActorOp<'T>) : ActorOp<'T> = {
+        Run =
+            fun cont ->
+                ExecutionNative.checkpoint ()
+                (f ()).Run cont
+    }
 
     member _.Combine(first: ActorOp<unit>, second: ActorOp<'T>) : ActorOp<'T> = {
         Run = fun cont -> first.Run(fun () -> second.Run cont)
     }
 
     member _.TryWith(body: ActorOp<'T>, handler: exn -> ActorOp<'T>) : ActorOp<'T> = {
-        Run =
-            fun cont ->
-                try
-                    body.Run cont
-                with ex ->
-                    (handler ex).Run cont
+        Run = fun cont -> ExecutionNative.tryWith (fun () -> body.Run cont) (fun ex -> (handler ex).Run cont)
     }
 
     /// Run cleanup when a CPS body completes or raises.
@@ -79,20 +91,27 @@ type ActorBuilder() =
                 (try
                     body.Run(fun value -> result <- value)
                  with _ ->
-                     compensation ()
+                     ExecutionNative.finalize compensation
                      reraise ())
 
-                compensation ()
+                ExecutionNative.finalize compensation
                 cont result
     }
 
     member this.Using(resource: 'a :> System.IDisposable, body: 'a -> ActorOp<'T>) : ActorOp<'T> =
-        this.TryFinally(body resource, (fun () -> resource.Dispose()))
+        // invariant: install disposal before a cancelled delayed body can reject execution
+        this.TryFinally(
+            this.Delay(fun () -> body resource),
+            fun () ->
+                if not (isNull (box resource)) then
+                    resource.Dispose()
+        )
 
     member _.While(guard: unit -> bool, body: ActorOp<unit>) : ActorOp<unit> = {
         Run =
             fun cont ->
                 let rec loop () =
+                    ExecutionNative.checkpoint ()
                     if guard () then body.Run(fun () -> loop ()) else cont ()
 
                 loop ()
@@ -107,7 +126,11 @@ type ActorBuilder() =
     /// assumption: Fable.Beam erases sequential Async to synchronous callbacks; Async.Parallel is the spawning exception
     /// tradeoff: supports shared Async APIs but does not add scheduler-based concurrency to a BEAM actor
     member _.Bind(op: Async<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
-        Run = fun cont -> (f (Async.RunSynchronously op)).Run cont
+        Run =
+            fun cont ->
+                let value = ExecutionNative.runAsync op
+                ExecutionNative.checkpointValue (box value)
+                (f value).Run cont
     }
 
 #else
@@ -162,10 +185,17 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
-    // decision: delays portable user binders so a cancelled continuation cannot execute user code before its next token check
+    // decision: delays nonresource portable binders so cancellation rejects user code while acquired resources can first install Using
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
 #if FABLE_COMPILER
-        async.Bind(op, fun value -> async.Delay(fun () -> f value))
+        async.Bind(
+            op,
+            fun value ->
+                // invariant: a resource handed back after cancellation reaches Using before its next checkpoint
+                match box value with
+                | :? System.IDisposable -> f value
+                | _ -> async.Delay(fun () -> f value)
+        )
 #else
         // invariant: resource-producing binders enter their finalizer before the next cancellation check
         async.Bind(op, f)
@@ -332,7 +362,8 @@ module Actor =
                     )
         }
 
-    let stopAsync cleanupDeadline target : Async<StopResult> =
+    /// Async bridge for shutdown observation; cleanupDeadline is a positive number of milliseconds.
+    let asyncStop cleanupDeadline target : Async<StopResult> =
         async {
             let mutable result = StopResult.TimedOut
             (stop cleanupDeadline target).Run(fun value -> result <- value)
@@ -425,9 +456,12 @@ module Actor =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        callCore (Some deadline) token System.Threading.CancellationToken.None target msg
+        // invariant: reused operations inherit the executing actor's token rather than their constructing process's token
+        {
+            Run = fun cont -> (callCore (Some deadline) token (ExecutionNative.token ()) target msg).Run cont
+        }
 
-    let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
+    let private asyncCallCore timeout token target msg : Async<CallResult<'Reply>> =
         async {
             let! ambient = Async.CancellationToken
 
@@ -450,23 +484,27 @@ module Actor =
                         | _ -> ok result)
         }
 
-    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
+    /// Async bridge for a bounded request with explicit outcomes; deadline is positive milliseconds.
+    let asyncCallResult deadline token target msg : Async<CallResult<'Reply>> =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        callCoreAsync (Some deadline) token target msg
+        asyncCallCore (Some deadline) token target msg
 
     /// Await a reply without a reply deadline, preserving rc.11's default. Native target death settles the wait.
     let call target msg : ActorOp<'Reply> = {
         Run =
             fun cont ->
-                (callCore None System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
-                    .Run(fun result -> cont (replyOrRaise result))
+                (callCore None System.Threading.CancellationToken.None (ExecutionNative.token ()) target msg)
+                    .Run(fun result ->
+                        ExecutionNative.checkpoint ()
+                        cont (replyOrRaise result))
     }
 
-    let callAsync target msg : Async<'Reply> =
+    /// Async bridge for awaiting a reply without a reply deadline.
+    let asyncCall target msg : Async<'Reply> =
         async {
-            let! result = callCoreAsync None System.Threading.CancellationToken.None target msg
+            let! result = asyncCallCore None System.Threading.CancellationToken.None target msg
             return replyOrRaise result
         }
 
@@ -477,24 +515,27 @@ module Actor =
         {
             Run =
                 fun cont ->
-                    (callCore (Some deadline) System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
-                        .Run(fun result -> cont (replyOrRaise result))
+                    (callCore (Some deadline) System.Threading.CancellationToken.None (ExecutionNative.token ()) target msg)
+                        .Run(fun result ->
+                            ExecutionNative.checkpoint ()
+                            cont (replyOrRaise result))
         }
 
-    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
+    /// Async bridge for awaiting a reply within a positive deadline in milliseconds.
+    let asyncCallWithTimeout deadline target msg : Async<'Reply> =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
         async {
             let! result =
-                callCoreAsync (Some deadline) System.Threading.CancellationToken.None target msg
+                asyncCallCore (Some deadline) System.Threading.CancellationToken.None target msg
 
             return replyOrRaise result
         }
 
     /// Receive next message (free function).
     let receive<'Msg> () : ActorOp<'Msg> = {
-        Run = fun cont -> receiveMsg (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> ExecutionNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
 #else
@@ -518,7 +559,13 @@ module Actor =
         lifetime.AddResource(mb :> System.IDisposable)
 #endif
         lifetime.AddResource(Lifetime.cancellation token lifetime.RequestStop)
-        attach inbox
+
+        try
+            attach inbox
+        with ex ->
+            // invariant: rejected ownership releases startup resources without evaluating the child body
+            lifetime.Complete(ActorExit.Failed ex)
+            reraise ()
 
         let workflow = async.Delay(fun () -> body inbox)
 
@@ -555,22 +602,28 @@ module Actor =
     let spawn (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
         spawnWithToken System.Threading.CancellationToken.None body
 
-    /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
-    ///
-    /// invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
-    /// decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
-    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
+    // invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
+    // decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
+    let private spawnLinkedCore retainChildFailure (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
         spawnOwned
             System.Threading.CancellationToken.None
             (fun child ->
-                parent.Lifetime.Own child.Lifetime
+                parent.Lifetime.Own(child.Lifetime, retainChildFailure)
 
                 child.Lifetime.Observe(fun exit ->
                     match exit with
-                    | ActorExit.Failed ex -> parent.Post(unbox { Pid = child.Pid; Reason = box ex })
+                    | ActorExit.Failed ex ->
+                        // invariant: shutdown rejects notifications before converting them to the parent's application message type
+                        parent.Lifetime.Post(fun () -> parent.Mb.Post(unbox { Pid = child.Pid; Reason = box ex }))
                     | _ -> ())
                 |> ignore)
             body
+
+    /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
+    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> = spawnLinkedCore false parent body
+
+    // decision: cooperative ownership retains earlier descendant defects without changing legacy supervision's handled-failure semantics
+    let internal spawnCooperativeLinked parent body = spawnLinkedCore true parent body
 
     /// Request cooperative cancellation. Use stop to observe actual exit.
     ///
@@ -595,7 +648,8 @@ module Actor =
                 pending.Add(target.Lifetime.Observe(fun exit -> pending.Settle(Choice1Of2(StopResult.Completed exit))))
                 target.Lifetime.RequestStop()))
 
-    let stopAsync cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
+    /// Async bridge for shutdown observation; cleanupDeadline is a positive number of milliseconds.
+    let asyncStop cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
 
     /// Enable supervision (stub on non-BEAM).
     ///
@@ -644,7 +698,8 @@ module Actor =
 
         callCore (Some deadline) token target msg
 
-    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> = callResult deadline token target msg
+    /// Async bridge for a bounded request with explicit outcomes; deadline is positive milliseconds.
+    let asyncCallResult deadline token target msg : Async<CallResult<'Reply>> = callResult deadline token target msg
 
     let private replyOrRaise =
         function
@@ -661,7 +716,8 @@ module Actor =
                 return replyOrRaise result
             })
 
-    let callAsync target msg : Async<'Reply> = call target msg
+    /// Async bridge for awaiting a reply without a reply deadline.
+    let asyncCall target msg : Async<'Reply> = call target msg
 
     /// Await a reply within a positive deadline; raises on timeout, target termination, or cancellation.
     let callWithTimeout deadline target msg : ActorOp<'Reply> =
@@ -676,12 +732,32 @@ module Actor =
                 return replyOrRaise result
             })
 
-    let callAsyncWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
+    /// Async bridge for awaiting a reply within a positive deadline in milliseconds.
+    let asyncCallWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
 
     /// Receive next message (free function, for backwards compatibility).
     let receive<'Msg> (inbox: Actor<'Msg>) : Async<'Msg> = inbox.Receive()
 
 #endif
+
+    // decision: deprecated aliases preserve published entry points while F# Async bridges use the async prefix
+    /// Use asyncStop to request shutdown and observe exit from an Async host.
+    [<System.Obsolete("Use Actor.asyncStop instead.")>]
+    let stopAsync cleanupDeadline target : Async<StopResult> = asyncStop cleanupDeadline target
+
+    /// Use asyncCallResult for a bounded request with explicit outcomes from an Async host.
+    [<System.Obsolete("Use Actor.asyncCallResult instead.")>]
+    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
+        asyncCallResult deadline token target msg
+
+    /// Use asyncCall to await a reply from an Async host.
+    [<System.Obsolete("Use Actor.asyncCall instead.")>]
+    let callAsync target msg : Async<'Reply> = asyncCall target msg
+
+    /// Use asyncCallWithTimeout to await a reply within a positive deadline from an Async host.
+    [<System.Obsolete("Use Actor.asyncCallWithTimeout instead.")>]
+    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
+        asyncCallWithTimeout deadline target msg
 
     // ============================================================================
     // Supervision

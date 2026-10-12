@@ -8,18 +8,19 @@ open Fable.Beam.Cowboy.Cowboy
 open Fable.Beam.Cowboy.CowboyRouter
 
 let start () =
-    ensureAllStarted (Erlang.binaryToAtom "cowboy")
-    |> ignore
+    match ensureAllStarted (Erlang.binaryToAtom "cowboy") with
+    | Error error -> failwithf "Cannot start Cowboy: %s" error
+    | Ok _ -> ()
 
+    // decision: serve HTTP through the F# Cowboy binding and retain the native WebSocket actor-interoperability sample
     let dispatch =
         compile [
             hostRule wildcard [
-                route "/" (Erlang.binaryToAtom "fable_actor_timeflies_http") []
+                route "/" (Erlang.binaryToAtom "timeflies_http") []
                 route "/ws" (Erlang.binaryToAtom "fable_actor_timeflies_ws") []
             ]
         ]
 
-    startClear (Erlang.binaryToAtom "timeflies_listener") (tcpPort 3000) (protocolOpts dispatch)
-    |> ignore
-
-    format "Timeflies demo running at http://localhost:3000~n" []
+    match startClear (Erlang.binaryToAtom "timeflies_listener") (tcpPort 3000) (protocolOpts dispatch) with
+    | Error error -> failwithf "Cannot start Timeflies listener: %s" error
+    | Ok _ -> format "Timeflies demo running at http://localhost:3000~n" []
