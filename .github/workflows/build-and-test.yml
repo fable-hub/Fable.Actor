@@ -59,8 +59,8 @@ jobs:
       - name: Run BEAM tests
         run: just test-beam
 
-      - name: Build BEAM library
-        run: just build
+      - name: Build BEAM library and Timeflies example
+        run: just build-timeflies
 
       - name: Pack NuGet
         run: just pack

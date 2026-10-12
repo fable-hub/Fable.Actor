@@ -120,7 +120,7 @@ run-timeflies: build-timeflies
     cd {{timeflies_path}} && erl \
         -pa _build/default/lib/*/ebin \
         -noshell \
-        -eval "fable_actor_timeflies_app:start()" \
+        -eval "timeflies_app:start()" \
         -eval "receive stop -> ok end"
 
 # --- Timeflies Python example ---

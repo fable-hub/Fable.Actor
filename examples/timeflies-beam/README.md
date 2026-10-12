@@ -2,6 +2,9 @@
 
 A classic Reactive Extensions demo reimplemented with actors using Fable.Actor (F#/Fable.Beam) and Cowboy WebSockets.
 
+The server setup and HTTP handler use `Fable.Beam.Cowboy`. The native Erlang
+WebSocket handler demonstrates exchanging messages with the F# actor pipeline.
+
 ## What it does
 
 The letters of "TIME FLIES LIKE AN ARROW" follow your mouse cursor, with each successive letter
@@ -40,14 +43,14 @@ Browser                              BEAM Server (Cowboy + Fable.Actor)
 
 - .NET SDK 10+
 - Fable BEAM compiler
-- Erlang/OTP
+- Erlang/OTP 27+
 - rebar3
 
 ## Running
 
 ```sh
-cd examples/timeflies-beam
-just run
+# From the repository root
+just run-timeflies
 ```
 
 Then open <http://localhost:3000> in your browser and move your mouse around.

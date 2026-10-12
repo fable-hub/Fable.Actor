@@ -130,6 +130,7 @@ also passes on the host's OTP 25.
 | Actor BEAM behavioral suite, OTP 29 | 76 passed |
 | Library and test .NET builds | 0 warnings, 0 errors |
 | Standalone BEAM library generation and compilation | Passed; existing generated/runtime warnings |
+| Timeflies example | Clean OTP 27 / Rebar 3.19 build; HTTP and WebSocket smoke passed with 24 letter updates |
 | Fantomas 8.0.8 check and `git diff --check` | Passed |
 | Candidate NuGet pack | Passed; pre-existing missing-readme metadata warning |
 | Independent packed actor consumer | 9 groups on all four targets; type-mismatch probes rejected |
