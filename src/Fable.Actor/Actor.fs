@@ -162,13 +162,10 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
-    // TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
-    // Revisit the extra delayed binder and Lifetime.guard calls after portable Bind/Delay
-    // stop on cancellation. Keep actor startup/late-callback cancellation regressions.
     // decision: delays portable user binders so a cancelled continuation cannot execute user code before its next token check
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
 #if FABLE_COMPILER
-        async.Bind(op, fun value -> Lifetime.guard (fun () -> f value))
+        async.Bind(op, fun value -> async.Delay(fun () -> f value))
 #else
         // invariant: resource-producing binders enter their finalizer before the next cancellation check
         async.Bind(op, f)
@@ -178,10 +175,10 @@ type ActorBuilder() =
     member _.ReturnFrom(op: Async<'T>) : Async<'T> = async.ReturnFrom(op)
     member _.Zero() : Async<unit> = async.Zero()
 
-    /// Guard the user expression even on runtimes whose cancellation callback falls through into computation code.
+    /// Delay the user expression until its actor continuation runs.
     ///
     /// invariant: an already cancelled actor continuation does not evaluate its delayed user expression
-    member _.Delay(f: unit -> Async<'T>) : Async<'T> = Lifetime.guard f
+    member _.Delay(f: unit -> Async<'T>) : Async<'T> = async.Delay f
 
     member _.Combine(first: Async<unit>, second: Async<'T>) : Async<'T> =
         async.Combine(first, async.Delay(fun () -> second))
@@ -190,10 +187,7 @@ type ActorBuilder() =
 
     /// Run cleanup once and preserve its failure, including during cancellation.
     ///
-    /// TODO(upstream): https://github.com/fable-compiler/Fable/pull/5038
-    /// Revisit the duplicate-terminal guard after the delay fix, but retain cleanup failure
-    /// reporting: standard Async preserves cancellation even when its finalizer throws.
-    /// Actor.stop must still report that cleanup failure, including on .NET.
+    /// invariant: duplicate terminal callbacks from supplied Async work cannot repeat cleanup
     ///
     /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
     member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
@@ -526,7 +520,7 @@ module Actor =
         lifetime.AddResource(Lifetime.cancellation token lifetime.RequestStop)
         attach inbox
 
-        let workflow = Lifetime.guard (fun () -> body inbox)
+        let workflow = async.Delay(fun () -> body inbox)
 
         let start () =
             Async.StartWithContinuations(
@@ -588,7 +582,7 @@ module Actor =
         if cleanupDeadline <= 0 then
             invalidArg "cleanupDeadline" "Cleanup deadline must be positive"
 
-        Lifetime.guard (fun () ->
+        async.Delay(fun () ->
             Lifetime.withContext (fun ((ok, _, cancelled), token) ->
                 let pending =
                     Lifetime.Pending(fun result ->
@@ -661,7 +655,7 @@ module Actor =
 
     /// Await a reply without a reply deadline, preserving rc.11's default. Target shutdown and caller cancellation settle the wait.
     let call target msg : ActorOp<'Reply> =
-        Lifetime.guard (fun () ->
+        async.Delay(fun () ->
             async {
                 let! result = callCore None System.Threading.CancellationToken.None target msg
                 return replyOrRaise result
@@ -674,7 +668,7 @@ module Actor =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        Lifetime.guard (fun () ->
+        async.Delay(fun () ->
             async {
                 let! result =
                     callCore (Some deadline) System.Threading.CancellationToken.None target msg
