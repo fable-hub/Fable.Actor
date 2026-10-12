@@ -12,6 +12,11 @@ receive wakeups, actor-expression finalization and the sequential Async bridge.
 ship in one package; including sources does not allocate a controller.
 Managed actors retain their existing `ActorLifetime` implementation.
 
+Ordinary native execution skips owned resource inspection, cleanup shielding and
+per-Async-bind token creation. The shared builder still checks execution context;
+the [ordinary execution comparison](ordinary-actor-costs.md) records its remaining
+cost against rc.14. No controller allocation does not imply zero runtime overhead.
+
 The native controller is F# using Fable.Beam 5.2.0 typed monitored spawning,
 revocable aliases and immutable native maps. Small emits implement selective
 receives matching a bound alias/monitor, native shape decoding and temporary

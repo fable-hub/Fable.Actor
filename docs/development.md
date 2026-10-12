@@ -33,6 +33,10 @@ For local compiler work, `just dev=true test-beam` uses the sibling `../Fable`
 checkout instead of the pinned released compiler. The same switch applies to
 other Fable compilation recipes.
 
+The [ordinary BEAM benchmark](../benchmarks/ordinary-beam/README.md) compares
+execution costs against a release baseline, including cancellation-token creation.
+Run it when changing the shared builder or its native execution helpers.
+
 ## Run Timeflies
 
 Timeflies gives each letter an actor and fans out mouse positions to produce a
