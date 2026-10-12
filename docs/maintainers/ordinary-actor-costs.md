@@ -80,10 +80,12 @@ ownership costs. Only matched OTP 27 comparisons are reported.
 
 ## Correctness checks
 
-The shared suites pass: .NET 84, JavaScript 82, Python 82 and BEAM 79 tests.
+At the measured revision, the shared suites pass: .NET 84, JavaScript 82,
+Python 82 and BEAM 79 tests.
 They retain coverage for preconstructed requests, cancellation/error-handler
 classification, late acquisition, once-only cleanup, finalizer shielding and
-transitive ownership. The tagged upstream cancellation and Async adapters remain.
+transitive ownership. The subsequent Fable 5.21.0 upgrade removes the upstream
+cancellation and Async adapters; see [released BEAM Async fixes](lifetimes.md#released-beam-async-fixes).
 
 The package also passes an independent ordinary-request and cooperative-shutdown
 smoke with a fresh package cache on all four targets. That smoke is narrower than

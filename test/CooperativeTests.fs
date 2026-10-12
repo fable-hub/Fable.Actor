@@ -164,6 +164,78 @@ let private sleepAdapter () =
         assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
+#if FABLE_COMPILER_BEAM
+let private plainAsyncResources () =
+    actor {
+        let mutable disposals = 0
+
+        let! value =
+            async {
+                use _resource = {
+                    new System.IDisposable with
+                        member _.Dispose() = disposals <- disposals + 1
+                }
+
+                return 42
+            }
+
+        assertThat value (isEqualTo 42)
+        assertThat disposals (isEqualTo 1)
+
+        let mutable cleanups = 0
+
+        let failed =
+            try
+                Async.RunSynchronously(
+                    async {
+                        try
+                            return ()
+                        finally
+                            cleanups <- cleanups + 1
+                            failwith "plain Async cleanup defect"
+                    }
+                )
+
+                false
+            with error ->
+                assertThat error.Message (isEqualTo "plain Async cleanup defect")
+                true
+
+        assertThat failed isTrue
+        assertThat cleanups (isEqualTo 1)
+    }
+
+let private cancellationIdentity () =
+    actor {
+        use cts = new CancellationTokenSource()
+        cts.Cancel()
+        let mutable entered = false
+
+        let cancelled =
+            try
+                try
+                    Async.RunSynchronously(async { entered <- true }, cancellationToken = cts.Token)
+                with error ->
+                    raise error
+
+                false
+            with :? System.OperationCanceledException ->
+                true
+
+        assertThat cancelled isTrue
+        assertThat entered (isEqualTo false)
+
+        let ordinary =
+            try
+                raise (System.Exception "operation_cancelled")
+            with
+            | :? System.OperationCanceledException -> false
+            | error -> error.Message = "operation_cancelled"
+
+        assertThat ordinary isTrue
+    }
+#endif
+
 let private acquireWith started released dispose : ActorOp<System.IDisposable> =
     let resource () = {
         new System.IDisposable with
@@ -954,6 +1026,12 @@ let tests =
             testAsync ("receive/cancellation races retain one exit and one cleanup", timeout 10000, fun _ -> toAsync (cancellationRace ()))
             testAsync ("text failures preserve their exception message", timeout 5000, fun _ -> toAsync (failedText ()))
 #if FABLE_COMPILER_BEAM
+            testAsync ("plain Async scopes dispose and finalize exactly once", timeout 5000, fun _ -> toAsync (plainAsyncResources ()))
+            testAsync (
+                "plain Async cancellation preserves nominal exception identity",
+                timeout 5000,
+                fun _ -> toAsync (cancellationIdentity ())
+            )
             testAsync ("releaseWhenExited waits for actual exit", timeout 5000, fun _ -> toAsync (deferredRelease ()))
             testAsync ("dead stop callers release private observers", timeout 5000, fun _ -> toAsync (abandonedObserver ()))
 #endif
