@@ -1,7 +1,13 @@
 # Getting started
 
-Fable.Actor lets you write F# actors for .NET, JavaScript, Python and BEAM.
-An actor owns its state and processes messages through its inbox.
+When several parts of an application need to update the same state, an actor
+gives one message loop responsibility for it. Callers send messages, and the
+actor handles them in sequence. This keeps state changes together and makes
+coordination explicit.
+
+Fable.Actor lets you use this model in F# on .NET, JavaScript, Python and BEAM.
+Start here with a simple message loop; later guides add replies, recovery and
+cooperative shutdown as you need them.
 
 ## Install
 

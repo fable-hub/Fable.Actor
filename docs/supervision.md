@@ -1,7 +1,16 @@
 # Supervision
 
-Supervision chooses what to do after a child crashes. Cooperative
-[lifetimes](lifetimes.md) choose when shutdown and cleanup are complete.
+A worker can crash while the rest of an application keeps running. Its owner
+needs to decide whether to replace it, stop using it, or propagate the failure.
+Supervision makes that recovery policy explicit: a parent observes child failures
+and chooses how to continue.
+
+Use supervision for long-lived services or background workers whose owner can
+start a fresh child after a failure. Restart creates a new actor; it does not
+restore the failed child's state or replay its messages automatically. Choose a
+policy that fits what the worker can safely restart.
+
+For shutdown that waits for owned cleanup, see [Lifetimes](lifetimes.md).
 
 ## Linked children
 

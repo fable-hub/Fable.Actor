@@ -1,8 +1,16 @@
 # Lifetimes
 
-Use `Lifetimes` when shutdown must observe actor-expression cleanup and owned
-children, or when callers need to inspect a terminal outcome more than once.
-Use ordinary `Actor.spawn` when its existing shutdown behavior is sufficient.
+Closing a session or disposing a component often means stopping several workers
+and releasing the resources they own. Requesting cancellation does not prove
+that cleanup has finished, and a deadline can expire while work is still running.
+Starting the next session too early can leave old work using the same resource.
+
+`Lifetimes` gives an owner a way to request cooperative shutdown and observe its
+actor-expression cleanup and registered children. It reports failures, retains
+the terminal outcome for repeated observation, and leaves unfinished cleanup
+observable after a timeout. Use it when that completion matters before moving on.
+Ordinary `Actor.spawn` is sufficient when its existing shutdown behavior meets
+your needs. For recovery after a worker crash, see [Supervision](supervision.md).
 
 The module ships in the **Fable.Actor** package and shares the `actor { }` builder.
 There is no extra package, builder or custom keyword. It is experimental and new

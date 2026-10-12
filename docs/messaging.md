@@ -1,7 +1,12 @@
 # Messaging
 
-After [Getting started](getting-started.md), use messages to change state or ask
-an actor for a result.
+Messages let other parts of an application change an actor's state without
+sharing mutable variables. Sending is enough when the caller can move on;
+requesting a reply is useful when it needs a result or confirmation before
+continuing. Deadlines bound how long the caller waits for that reply.
+
+After [Getting started](getting-started.md), this guide shows both styles with a
+counter, then adds explicit timeout and cancellation outcomes.
 
 ## State and replies
 
