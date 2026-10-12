@@ -1,11 +1,19 @@
 ---
-last_commit_released: 339477f5c7598f9c6902afaa82e08876dbf0deb5
+last_commit_released: 26741d18ef4e2cbe0b05b4362c6bd659a956018b
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.16 - 2026-10-12
+
+### 🐞 Bug Fixes
+
+* Use released BEAM cancellation semantics (#80) ([26741d1](https://github.com/fable-hub/Fable.Actor/commit/26741d18ef4e2cbe0b05b4362c6bd659a956018b))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/339477f5c7598f9c6902afaa82e08876dbf0deb5..26741d18ef4e2cbe0b05b4362c6bd659a956018b)</small></strong>
 
 ## 5.0.0-rc.15 - 2026-10-12
 
