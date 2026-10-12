@@ -12,9 +12,8 @@ observable after a timeout. Use it when that completion matters before moving on
 Ordinary `Actor.spawn` is sufficient when its existing shutdown behavior meets
 your needs. For recovery after a worker crash, see [Supervision](supervision.md).
 
-The module ships in the **Fable.Actor** package and shares the `actor { }` builder.
-There is no extra package, builder or custom keyword. It is experimental and new
-in PR #77; the published 5.0.0-rc.14 package does not yet contain it.
+`Fable.Actor.Lifetimes` is an F# module in the **Fable.Actor** NuGet package.
+Its actors use the shared `actor { }` computation expression.
 
 ## Start and message a worker
 

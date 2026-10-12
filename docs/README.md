@@ -9,8 +9,7 @@ Read the guides in order, or jump to the feature you need.
 | 3 | [Supervision](supervision.md) | Own linked children and choose recovery policies |
 | 4 | [Lifetimes](lifetimes.md) | Opt into cooperative shutdown and retained outcomes |
 
-The library is experimental. These guides describe this branch; the `Lifetimes`
-module is new in PR #77 and is not part of the published 5.0.0-rc.14 package.
+The library is experimental.
 
 For target differences, see [Platform notes](platforms.md). To build the repo,
 run tests or try Timeflies, see [Development](development.md).
