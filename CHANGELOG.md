@@ -1,11 +1,23 @@
 ---
-last_commit_released: 6d6b352cb08e8efd3dce5eaf6784ab5ae3ab84c4
+last_commit_released: 339477f5c7598f9c6902afaa82e08876dbf0deb5
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.15 - 2026-10-12
+
+### 🚀 Features
+
+* Add opt-in Lifetimes module for cooperative actors (#77) ([b0c098f](https://github.com/fable-hub/Fable.Actor/commit/b0c098f36b68262e985c92a5e8cf82f7b20855e6))
+
+### ⚡ Performance Improvements
+
+* Reduce ordinary actor execution overhead (#79) ([339477f](https://github.com/fable-hub/Fable.Actor/commit/339477f5c7598f9c6902afaa82e08876dbf0deb5))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/6d6b352cb08e8efd3dce5eaf6784ab5ae3ab84c4..339477f5c7598f9c6902afaa82e08876dbf0deb5)</small></strong>
 
 ## 5.0.0-rc.14 - 2026-10-12
 
