@@ -2,6 +2,7 @@
 ///
 /// decision: keep token propagation and finalization independent of descendant ownership and terminal history
 /// invariant: a cancellation request does not assert body completion or foreign-resource settlement
+/// assumption: BEAM compilation uses Fable 5.21.0 or later for typed cancellation and named-token Async.RunSynchronously
 module internal Fable.Actor.ExecutionNative
 
 #if FABLE_COMPILER_BEAM
@@ -81,47 +82,30 @@ let inline runAsync (operation: Async<'Value>) : 'Value =
     match context () with
     | None -> Async.RunSynchronously operation
     | Some(_, cancellationToken) ->
-        // TODO(upstream Fable): replace this emit with Async.RunSynchronously(operation, cancellationToken = activeToken) once BEAM optional-argument lowering uses run_synchronously/2 instead of nonexistent /3.
-        // decision: pass the ambient token explicitly because the published runtime exposes run_synchronously/2, not /3
         let activeToken =
             if inCleanup () then
                 CancellationToken.None
             else
                 cancellationToken
 
-        emitErlExpr (operation, activeToken) "fable_async:run_synchronously($0, $1)"
+        Async.RunSynchronously(operation, cancellationToken = activeToken)
 
-// decision: preserve the raw cancellation signal before F# catch normalization can erase its identity
 // invariant: owned cancellation bypasses ordinary error handlers; cleanup defects still reach those handlers
-// TODO(upstream Fable): replace this raw-catch shim with typed F# cancellation filtering in ActorBuilder.TryWith once BEAM normalization preserves OperationCanceledException identity.
 let tryWith (body: unit -> unit) (handler: exn -> unit) =
-    emitErlExpr
-        (body, handler, token ())
-        """
-    try $0(ok) catch
-        error:operation_cancelled:Stack ->
-            case fable_cancellation:is_cancellation_requested($2) of
-                true -> erlang:raise(error, operation_cancelled, Stack);
-                false -> $1(fable_async:wrap_error(operation_cancelled))
-            end;
-        _:Failure -> $1(fable_async:wrap_error(Failure))
-    end
-    """
+    try
+        body ()
+    with
+    | :? System.OperationCanceledException when (token ()).IsCancellationRequested -> reraise ()
+    | error -> handler error
 
 // decision: classify only the runtime cancellation signal as cancellation, even if a defect races a stop request
-// TODO(upstream Fable): replace this raw-catch adapter with F# try/with once runtime cancellation has a preserved OperationCanceledException identity.
 let private bodyResult (token: CancellationToken) (body: unit -> unit) : ActorExit =
-    emitErlExpr
-        (token, body)
-        """
-    try $1(ok), normal catch
-        error:operation_cancelled ->
-            case fable_cancellation:is_cancellation_requested($0) of
-                true -> cancelled; false -> {failed, fable_async:wrap_error(operation_cancelled)}
-            end;
-        _:Failure -> {failed, fable_async:wrap_error(Failure)}
-    end
-    """
+    try
+        body ()
+        ActorExit.Normal
+    with
+    | :? System.OperationCanceledException when token.IsCancellationRequested -> ActorExit.Cancelled
+    | error -> ActorExit.Failed error
 
 // invariant: cancellation wakes an idle receive without becoming an application message
 let rec receiveOwned cont =

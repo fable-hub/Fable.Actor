@@ -37,11 +37,11 @@ builder. Cancellation is cooperative: a synchronous foreign call can continue
 after a deadline. Adapters must acknowledge their actual resource cleanup before
 the owner can safely reuse that resource.
 
-Put guaranteed resource scopes in the actor expression. Published Fable 5.20.1
-BEAM plain Async can repeat a throwing `finally` and fail to dispose a `use`
-resource. This concerns scopes inside nested `async { }`, not the actor builder's
-own `use`/`finally`. [Maintainer notes](maintainers/lifetimes.md) provide executable
-probes and the remaining upstream work.
+Fable 5.21.0 fixes BEAM plain Async disposal and once-only finalization, including
+scopes inside nested `async { }`. Plain Async follows .NET: cancellation remains
+terminal even if its finalizer throws. The actor builder additionally reports
+cleanup defects as failed exits. [Maintainer notes](maintainers/lifetimes.md)
+provide executable runtime probes.
 
 ## Runtime versions
 
@@ -49,3 +49,5 @@ The repository pins Fable through [the tool manifest](../.config/dotnet-tools.js
 OTP/Rebar through [mise.toml](../mise.toml), and the Python runtime dependency
 through [pyproject.toml](../pyproject.toml) and [uv.lock](../uv.lock). Use those
 versions when reproducing repository behavior.
+BEAM compilation requires Fable 5.21.0 or later for typed cancellation and the
+named-token `Async.RunSynchronously` bridge.

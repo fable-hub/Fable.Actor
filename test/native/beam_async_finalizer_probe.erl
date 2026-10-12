@@ -22,8 +22,9 @@ run() ->
     end,
     Count = erase(cleanups),
     io:format("Plain BEAM Async finalizer: ~p invocations, result ~p~n", [Count, Result]),
+    %% invariant: cancellation remains terminal when compensation throws, matching .NET Async.
     case {Count, Result} of
-        {1, #{message := <<"cleanup defect">>}} -> ok;
+        {1, #{exn_type := operation_canceled_exception}} -> ok;
         _ -> erlang:error({async_finalizer_contract_failed, Count, Result})
     end.
 

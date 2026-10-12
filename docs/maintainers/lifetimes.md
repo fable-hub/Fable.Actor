@@ -19,8 +19,7 @@ cost against rc.14. No controller allocation does not imply zero runtime overhea
 
 The native controller is F# using Fable.Beam 5.2.0 typed monitored spawning,
 revocable aliases and immutable native maps. Small emits implement selective
-receives matching a bound alias/monitor, native shape decoding and temporary
-runtime adapters.
+receives matching a bound alias/monitor and native shape decoding.
 
 Ownership acknowledgement precedes child startup. Rejected attachment cancels
 and releases the suspended worker without evaluating its user body. Monitoring
@@ -78,20 +77,34 @@ messages. The new lifetime bridge is named `asyncStop` directly.
 The renamed bridges pass the same four behavioral suites; .NET metadata checks
 verify their Async return types and the aliases' migration warnings.
 
-## Independent Fable runtime defects
+## Released BEAM Async fixes
 
-These published BEAM Async defects remain outside the lifetime controller:
+Fable 5.21.0 includes [Fable #5057](https://github.com/fable-compiler/Fable/pull/5057),
+which fixes the independent BEAM Async defects reproduced with 5.20.1:
 
-| Defect | Current handling or evidence |
+| Former defect | Released behavior |
 | --- | --- |
-| Named-token `Async.RunSynchronously` lowers to unavailable `run_synchronously/3` | The actor bridge calls the supported two-argument runtime function |
-| Cancellation loses its identity during F# catch normalization | Raw-catch adapters preserve cancellation before normalization |
-| Throwing plain Async finalizer can run twice | `run/0` probe reports two invocations and fails its once-only assertion |
-| Plain Async `Using` supplies an incompatible finalizer callback | `run_using/0` probe reports zero disposals and `badarity` |
+| Named-token `Async.RunSynchronously` lowers to unavailable `run_synchronously/3` | Compiler and runtime support the three-argument call |
+| Cancellation loses its identity during F# catch normalization | Typed `OperationCanceledException` patterns survive catch and rethrow |
+| Throwing plain Async finalizer can run twice | Finalization runs once; cancellation remains terminal even if cleanup throws |
+| Plain Async `Using` supplies an incompatible finalizer callback | Resources are disposed once |
 
-Removable adapters in `ExecutionNative.fs` carry `TODO(upstream Fable)` comments
-with their removal conditions. Actor-expression finalizers use a separate
-implementation; the passing actor tests do not prove nested plain Async safe.
+`ExecutionNative.fs` now uses standard `Async.RunSynchronously` and typed F# catches.
+The explicit arity emit and both raw-catch adapters are removed. Actor-expression
+finalizers retain their separate implementation because cleanup shielding and
+observable cleanup failures are lifetime policy.
+
+Release validation passes .NET 84, JavaScript 82, Python 82 and BEAM 81 tests.
+The Python suite uses the locked fable-library 5.20.1; this release's BEAM fixes
+come from the compiler-bundled runtime. The two new BEAM tests cover compiled F#
+plain Async resource scopes and cancellation identity, alongside the independent
+runtime probes below.
+
+The ordinary actor benchmark compares rc.15 and this adapter removal with both
+compiled by Fable 5.21.0, matching bundled runtime sources and pinned OTP. All five
+workloads pass their result checks. Ordinary Async creates zero tokens per 1,000
+binds in both revisions; reductions are effectively unchanged and no timing
+regression is observed. These microbenchmarks do not establish application throughput.
 
 Run the independent probes from the repository root after generating the suite:
 
@@ -105,5 +118,6 @@ mise exec -- erl -noshell -pa build/runtime-probe build/tests-beam/_build/defaul
   -eval 'beam_async_finalizer_probe:run_using(), halt().'
 ```
 
-Both probes intentionally fail on the pinned runtime. They are upstream
-reproductions, not passing library acceptance checks.
+Both probes pass with Fable 5.21.0: the cancelled computation retains its typed
+cancellation exception after exactly one throwing finalizer, and `Using` disposes
+once before returning 42. Their historical failures are recorded in Git history.

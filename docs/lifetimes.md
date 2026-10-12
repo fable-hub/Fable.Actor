@@ -124,9 +124,9 @@ parallel work need their own resource-settlement acknowledgement. They can outli
 a stop deadline. A reply timeout does not undo the target's work.
 
 On BEAM, calling `Actor.kill` or `Actor.stop` through the message reference skips
-graceful cleanup. Plain nested `async { }` resource scopes also depend on the
-runtime: Fable 5.20.1 has separate BEAM Async finalizer/disposal defects. Put
-resource scopes in `actor { }`; see [Platform notes](platforms.md) for the boundary.
+graceful cleanup. With Fable 5.21.0, plain nested `async { }` scopes dispose and
+finalize once. Plain Async retains cancellation if cleanup throws; actor-expression
+finalizers report cleanup failures. See [Platform notes](platforms.md) for the boundary.
 
 For implementation and regression details, see
 [Maintainer notes](maintainers/lifetimes.md).
