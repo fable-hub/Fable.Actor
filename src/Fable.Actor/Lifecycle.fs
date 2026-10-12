@@ -160,13 +160,17 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
 
     member _.IsStopping = Lifetime.synchronize gate (fun () -> stopping)
 
+    member _.IsCompleted = Lifetime.synchronize gate (fun () -> result.IsSome)
+
     member _.ObserverCount =
         Lifetime.synchronize gate (fun () -> observers.Count + terminationObservers.Count)
 
     member _.ChildCount = Lifetime.synchronize gate (fun () -> children.Count)
 
     member private _.RecordFailure(ex: exn) =
-        Lifetime.synchronize gate (fun () -> failure <- Some ex)
+        Lifetime.synchronize gate (fun () ->
+            if failure.IsNone then
+                failure <- Some ex)
 
     member private _.Publish() =
         let notification =
@@ -178,9 +182,11 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
                     && children.Count = 0
                     ->
                     let outcome =
-                        match failure with
-                        | Some ex -> ActorExit.Failed ex
-                        | None -> exit
+                        // decision: retains the original body defect before any descendant cleanup defect
+                        match exit, failure with
+                        | ActorExit.Failed _, _ -> exit
+                        | _, Some ex -> ActorExit.Failed ex
+                        | _, None -> exit
 
                     result <- Some outcome
                     let callbacks = observers.Values |> Seq.toArray
@@ -307,6 +313,10 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
     member this.Own(child: ActorLifetime) =
         let id, stop =
             Lifetime.synchronize gate (fun () ->
+                // invariant: no descendant can join after terminal publication
+                if result.IsSome then
+                    invalidOp "Actor parent has already exited"
+
                 nextId <- nextId + 1
                 children.Add(nextId, child)
                 nextId, stopping)

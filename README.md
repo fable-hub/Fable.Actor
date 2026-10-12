@@ -252,3 +252,35 @@ MIT
 - [FSharp.Control.AsyncRx](https://github.com/dbrattli/AsyncRx) — Async Reactive Extensions for F#
 - [Fable](https://github.com/fable-compiler/Fable) — F# to JS/Python/BEAM compiler
 - [Fable.Beam](https://github.com/fable-compiler/Fable.Beam) — F# bindings (FFI) for BEAM/Erlang
+
+## Experimental cooperative lifetimes
+
+`Cooperative.spawn` returns a creator-held `CooperativeActor<Message>` capability.
+Share `Cooperative.reference owner` for messaging; retain the capability for
+ownership and stop observation. `Cooperative.spawnLinked` registers a child
+before its body starts. `Cooperative.stop` observes the body and every owned
+cooperative descendant, retaining `Normal`, `Cancelled`, or the original terminal
+failure for repeated observation. A positive deadline returns `TimedOut` without
+killing work; later observation can succeed.
+
+On BEAM this capability uses a private control process. Cancellation wakes idle
+receives, reaches request waits and sequential Async adapters, and checks actor CE
+boundaries. Actor CE `use`/`use!` installs disposal before the next checkpoint;
+actor finalizers run once with ambient cancellation shielded. Existing native
+`Actor.kill` and `Actor.stop` retain their force-kill behavior, including skipped
+finalizers. Calling them through the message reference leaves the cooperative
+cleanup guarantee.
+
+Release completed capabilities with `Cooperative.release`. `Running` leaves
+observation available; `Released` relinquishes it. `releaseWhenExited` relinquishes
+future observation while retaining ownership until exit. Do not reuse relinquished
+capabilities. Creator death cancels native work and reclaims its observation state
+after cleanup. Managed targets use the existing lifetime and garbage collection.
+
+Synchronous host work, raw processes and arbitrary parallel work have no owned
+cleanup guarantee. Sequential Async adapters receive the owned token, but their
+internal finalizers belong to the target Async runtime: published BEAM Async can
+repeat a throwing finalizer and its plain Async `Using` does not dispose correctly.
+Use the actor CE for guaranteed resource scopes.
+See [the design and validation report](docs/cooperative-lifetimes.md) for ordering,
+the runtime reproduction and validation boundaries.

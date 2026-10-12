@@ -8,7 +8,8 @@
 //   actor.Post(msg)  — send a message (from outside)
 //
 // decision: presents one actor API while selecting native BEAM processes or MailboxProcessor at compile time
-// invariant: actors exchange state across process boundaries only through messages
+// invariant: application actor state crosses process boundaries only through messages
+// decision: cooperative cancellation uses runtime-shared tokens outside the application message protocol
 // tradeoff: maintains two runtime implementations to preserve each target's native concurrency semantics
 namespace Fable.Actor
 
@@ -38,20 +39,36 @@ type Actor<'Msg> = {
 } with
 
     member _.Receive() : ActorOp<'Msg> = {
-        Run = fun cont -> receiveMsg (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> CooperativeNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
     member this.Post(msg: 'Msg) = sendMsg this.Pid msg
 
 type ActorBuilder() =
     member _.Bind(op: ActorOp<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
-        Run = fun cont -> op.Run(fun value -> (f value).Run cont)
+        Run =
+            fun cont ->
+                op.Run(fun value ->
+                    CooperativeNative.checkpointValue (box value)
+                    (f value).Run cont)
     }
 
-    member _.Return(value: 'T) : ActorOp<'T> = { Run = fun cont -> cont value }
+    member _.Return(value: 'T) : ActorOp<'T> = {
+        Run =
+            fun cont ->
+                CooperativeNative.checkpointValue (box value)
+                cont value
+    }
+
     member _.ReturnFrom(op: ActorOp<'T>) : ActorOp<'T> = op
     member _.Zero() : ActorOp<unit> = { Run = fun cont -> cont () }
-    member _.Delay(f: unit -> ActorOp<'T>) : ActorOp<'T> = { Run = fun cont -> (f ()).Run cont }
+
+    member _.Delay(f: unit -> ActorOp<'T>) : ActorOp<'T> = {
+        Run =
+            fun cont ->
+                CooperativeNative.checkpoint ()
+                (f ()).Run cont
+    }
 
     member _.Combine(first: ActorOp<unit>, second: ActorOp<'T>) : ActorOp<'T> = {
         Run = fun cont -> first.Run(fun () -> second.Run cont)
@@ -79,20 +96,27 @@ type ActorBuilder() =
                 (try
                     body.Run(fun value -> result <- value)
                  with _ ->
-                     compensation ()
+                     CooperativeNative.finalize compensation
                      reraise ())
 
-                compensation ()
+                CooperativeNative.finalize compensation
                 cont result
     }
 
     member this.Using(resource: 'a :> System.IDisposable, body: 'a -> ActorOp<'T>) : ActorOp<'T> =
-        this.TryFinally(body resource, (fun () -> resource.Dispose()))
+        // invariant: install disposal before a cancelled delayed body can reject execution
+        this.TryFinally(
+            this.Delay(fun () -> body resource),
+            fun () ->
+                if not (isNull (box resource)) then
+                    resource.Dispose()
+        )
 
     member _.While(guard: unit -> bool, body: ActorOp<unit>) : ActorOp<unit> = {
         Run =
             fun cont ->
                 let rec loop () =
+                    CooperativeNative.checkpoint ()
                     if guard () then body.Run(fun () -> loop ()) else cont ()
 
                 loop ()
@@ -107,7 +131,11 @@ type ActorBuilder() =
     /// assumption: Fable.Beam erases sequential Async to synchronous callbacks; Async.Parallel is the spawning exception
     /// tradeoff: supports shared Async APIs but does not add scheduler-based concurrency to a BEAM actor
     member _.Bind(op: Async<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
-        Run = fun cont -> (f (Async.RunSynchronously op)).Run cont
+        Run =
+            fun cont ->
+                let value = CooperativeNative.runAsync op
+                CooperativeNative.checkpointValue (box value)
+                (f value).Run cont
     }
 
 #else
@@ -162,10 +190,17 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
     member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
-    // decision: delays portable user binders so a cancelled continuation cannot execute user code before its next token check
+    // decision: delays nonresource portable binders so cancellation rejects user code while acquired resources can first install Using
     member _.Bind(op: Async<'T>, f: 'T -> Async<'U>) : Async<'U> =
 #if FABLE_COMPILER
-        async.Bind(op, fun value -> async.Delay(fun () -> f value))
+        async.Bind(
+            op,
+            fun value ->
+                // invariant: a resource handed back after cancellation reaches Using before its next checkpoint
+                match box value with
+                | :? System.IDisposable -> f value
+                | _ -> async.Delay(fun () -> f value)
+        )
 #else
         // invariant: resource-producing binders enter their finalizer before the next cancellation check
         async.Bind(op, f)
@@ -425,7 +460,7 @@ module Actor =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        callCore (Some deadline) token System.Threading.CancellationToken.None target msg
+        callCore (Some deadline) token (CooperativeNative.token ()) target msg
 
     let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
         async {
@@ -460,8 +495,10 @@ module Actor =
     let call target msg : ActorOp<'Reply> = {
         Run =
             fun cont ->
-                (callCore None System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
-                    .Run(fun result -> cont (replyOrRaise result))
+                (callCore None System.Threading.CancellationToken.None (CooperativeNative.token ()) target msg)
+                    .Run(fun result ->
+                        CooperativeNative.checkpoint ()
+                        cont (replyOrRaise result))
     }
 
     let callAsync target msg : Async<'Reply> =
@@ -477,8 +514,10 @@ module Actor =
         {
             Run =
                 fun cont ->
-                    (callCore (Some deadline) System.Threading.CancellationToken.None System.Threading.CancellationToken.None target msg)
-                        .Run(fun result -> cont (replyOrRaise result))
+                    (callCore (Some deadline) System.Threading.CancellationToken.None (CooperativeNative.token ()) target msg)
+                        .Run(fun result ->
+                            CooperativeNative.checkpoint ()
+                            cont (replyOrRaise result))
         }
 
     let callAsyncWithTimeout deadline target msg : Async<'Reply> =
@@ -494,7 +533,7 @@ module Actor =
 
     /// Receive next message (free function).
     let receive<'Msg> () : ActorOp<'Msg> = {
-        Run = fun cont -> receiveMsg (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> CooperativeNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
 #else
@@ -518,7 +557,13 @@ module Actor =
         lifetime.AddResource(mb :> System.IDisposable)
 #endif
         lifetime.AddResource(Lifetime.cancellation token lifetime.RequestStop)
-        attach inbox
+
+        try
+            attach inbox
+        with ex ->
+            // invariant: rejected ownership releases startup resources without evaluating the child body
+            lifetime.Complete(ActorExit.Failed ex)
+            reraise ()
 
         let workflow = async.Delay(fun () -> body inbox)
 
@@ -567,7 +612,9 @@ module Actor =
 
                 child.Lifetime.Observe(fun exit ->
                     match exit with
-                    | ActorExit.Failed ex -> parent.Post(unbox { Pid = child.Pid; Reason = box ex })
+                    | ActorExit.Failed ex ->
+                        // invariant: shutdown rejects notifications before converting them to the parent's application message type
+                        parent.Lifetime.Post(fun () -> parent.Mb.Post(unbox { Pid = child.Pid; Reason = box ex }))
                     | _ -> ())
                 |> ignore)
             body
