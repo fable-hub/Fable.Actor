@@ -310,7 +310,7 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
             Lifetime.synchronize gate (fun () -> completing <- false)
             this.Publish()
 
-    member this.Own(child: ActorLifetime) =
+    member this.Own(child: ActorLifetime, retainFailure: bool) =
         let id, stop =
             Lifetime.synchronize gate (fun () ->
                 // invariant: no descendant can join after terminal publication
@@ -322,11 +322,14 @@ type internal ActorLifetime(cts: CancellationTokenSource) =
                 nextId, stopping)
 
         child.Observe(fun exit ->
-            match exit with
-            | ActorExit.Failed ex when this.IsStopping -> this.RecordFailure ex
-            | _ -> ()
+            // invariant: retained failure and ownership removal are serialized before terminal publication
+            Lifetime.synchronize gate (fun () ->
+                match exit with
+                | ActorExit.Failed ex when (retainFailure || stopping) && failure.IsNone -> failure <- Some ex
+                | _ -> ()
 
-            Lifetime.synchronize gate (fun () -> children.Remove id |> ignore)
+                children.Remove id |> ignore)
+
             this.Publish())
         |> ignore
 

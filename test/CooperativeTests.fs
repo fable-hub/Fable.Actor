@@ -800,10 +800,156 @@ let private deferredRelease () =
     }
 #endif
 
+let private preconstructedRequest () =
+    actor {
+        let admitted, cleaned = barrier (), barrier ()
+
+        let service: Actor<unit * ReplyChannel<int>> =
+            Actor.start () (fun () (_, _) ->
+                Actor.cast admitted Signal
+                Continue())
+        // invariant: construction precedes both owners; each execution must resolve its own ambient token
+        let operation = Actor.callResult 2000 CancellationToken.None service ()
+
+        for n in 1..2 do
+            let owner: CooperativeActor<unit> =
+                Cooperative.spawn (fun _ ->
+                    actor {
+                        try
+                            let! _ = operation
+                            return ()
+                        finally
+                            Actor.cast cleaned Signal
+                    })
+
+            do! await n admitted
+            let! stopped = Cooperative.stop 500 owner
+            assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
+            do! await n cleaned
+            Cooperative.release owner |> ignore
+
+        for events in [ admitted; cleaned ] do
+            let! _ = Actor.stop deadline events
+            ()
+
+        let! _ = Actor.stop deadline service
+        ()
+    }
+
+let private cancellationHandler () =
+    actor {
+        let started, handled, cleaned = barrier (), barrier (), barrier ()
+
+        let owner: CooperativeActor<unit> =
+            Cooperative.spawn (fun owner ->
+                actor {
+                    try
+                        try
+                            Actor.cast started Signal
+                            let! _ = (Cooperative.reference owner).Receive()
+                            return ()
+                        with error ->
+                            Actor.cast handled Signal
+                            raise error
+                    finally
+                        Actor.cast cleaned Signal
+                })
+
+        do! await 1 started
+        let! stopped = Cooperative.stop deadline owner
+        assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
+        do! await 1 cleaned
+        let! count = Actor.callWithTimeout deadline handled Read
+        assertThat count (isEqualTo 0)
+        Cooperative.release owner |> ignore
+
+        for events in [ started; handled; cleaned ] do
+            let! _ = Actor.stop deadline events
+            ()
+    }
+
+let private earlierDescendantFailure () =
+    actor {
+        let started, handled, checkedEvents = barrier (), barrier (), barrier ()
+        let handles = reporter None
+        let original = System.Exception "earlier descendant cleanup defect"
+
+        let owner: CooperativeActor<obj> =
+            Cooperative.spawn (fun owner ->
+                actor {
+                    let child: CooperativeActor<unit> =
+                        Cooperative.spawnLinked owner (fun child ->
+                            actor {
+                                try
+                                    Actor.cast started Signal
+                                    let! _ = (Cooperative.reference child).Receive()
+                                    return ()
+                                finally
+                                    raise original
+                            })
+
+                    Actor.cast handles (Some(Some child))
+
+                    let rec loop () =
+                        actor {
+                            let! message = (Cooperative.reference owner).Receive()
+
+                            match Actor.tryAsChildExited message with
+                            | Some exited ->
+                                assertThat (unbox<exn> exited.Reason) (isEqualTo original)
+                                Actor.cast handled Signal
+                                return! loop ()
+                            | None ->
+                                Actor.cast checkedEvents Signal
+                                return ()
+                        }
+
+                    return! loop ()
+                })
+
+        do! await 1 started
+        let! child = Actor.callWithTimeout deadline handles None
+        let child = Option.get child
+        Actor.send (Cooperative.reference child) ()
+        do! await 1 handled
+        // decision: a subsequent parent-handled message proves the child failed while its owner stayed live
+        Actor.send (Cooperative.reference owner) (box "checkpoint")
+        do! await 1 checkedEvents
+        do! observeExit (Cooperative.reference owner)
+
+        for _ in 1..2 do
+            let! stopped = Cooperative.stop deadline owner
+
+            match stopped with
+            | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
+            | other -> failwithf "Earlier descendant failure was lost: %A" other
+
+        Cooperative.release child |> ignore
+        Cooperative.release owner |> ignore
+
+        for events in [ started; handled; checkedEvents ] do
+            let! _ = Actor.stop deadline events
+            ()
+
+        let! _ = Actor.stop deadline handles
+        ()
+    }
+
 let tests =
     testList (
         "Cooperative",
         [
+            testAsync (
+                "preconstructed and reused requests inherit the executing owner token",
+                timeout 5000,
+                fun _ -> toAsync (preconstructedRequest ())
+            )
+            testAsync ("cancellation bypasses logging and rethrow error handlers", timeout 5000, fun _ -> toAsync (cancellationHandler ()))
+            testAsync (
+                "earlier handled descendant cleanup failure remains terminal",
+                timeout 5000,
+                fun _ -> toAsync (earlierDescendantFailure ())
+            )
             testAsync ("late acquisition cleanup defects remain observable", timeout 5000, fun _ -> toAsync (lateCleanupDefect ()))
             testAsync ("receive/cancellation races retain one exit and one cleanup", timeout 10000, fun _ -> toAsync (cancellationRace ()))
             testAsync ("text failures preserve their exception message", timeout 5000, fun _ -> toAsync (failedText ()))

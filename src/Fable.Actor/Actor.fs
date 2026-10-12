@@ -75,12 +75,7 @@ type ActorBuilder() =
     }
 
     member _.TryWith(body: ActorOp<'T>, handler: exn -> ActorOp<'T>) : ActorOp<'T> = {
-        Run =
-            fun cont ->
-                try
-                    body.Run cont
-                with ex ->
-                    (handler ex).Run cont
+        Run = fun cont -> CooperativeNative.tryWith (fun () -> body.Run cont) (fun ex -> (handler ex).Run cont)
     }
 
     /// Run cleanup when a CPS body completes or raises.
@@ -460,7 +455,10 @@ module Actor =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        callCore (Some deadline) token (CooperativeNative.token ()) target msg
+        // invariant: reused operations inherit the executing actor's token rather than their constructing process's token
+        {
+            Run = fun cont -> (callCore (Some deadline) token (CooperativeNative.token ()) target msg).Run cont
+        }
 
     let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
         async {
@@ -600,15 +598,13 @@ module Actor =
     let spawn (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
         spawnWithToken System.Threading.CancellationToken.None body
 
-    /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
-    ///
-    /// invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
-    /// decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
-    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
+    // invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
+    // decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
+    let private spawnLinkedCore retainChildFailure (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
         spawnOwned
             System.Threading.CancellationToken.None
             (fun child ->
-                parent.Lifetime.Own child.Lifetime
+                parent.Lifetime.Own(child.Lifetime, retainChildFailure)
 
                 child.Lifetime.Observe(fun exit ->
                     match exit with
@@ -618,6 +614,12 @@ module Actor =
                     | _ -> ())
                 |> ignore)
             body
+
+    /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
+    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> = spawnLinkedCore false parent body
+
+    // decision: cooperative ownership retains earlier descendant defects without changing legacy supervision's handled-failure semantics
+    let internal spawnCooperativeLinked parent body = spawnLinkedCore true parent body
 
     /// Request cooperative cancellation. Use stop to observe actual exit.
     ///

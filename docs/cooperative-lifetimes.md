@@ -30,6 +30,19 @@ terminal state after cleanup. A long-lived creator must explicitly release
 completed capabilities. Managed targets use the existing `ActorLifetime` and
 reclaim unreachable state through garbage collection.
 
+The native controller is written in F# with private protocol unions, an immutable
+state record and typed native maps. Fable.Beam **5.2.0** supplies atomic monitored
+spawning, revocable aliases, typed sends, monitors and process dictionary access.
+The controller loop, ownership handshake, descendant failure retention and
+publication policy do not live in an Erlang emit.
+
+Small interop boundaries remain for selective receives matching a bound alias or
+monitor reference, recognizing native resource/exit shapes, and preserving the
+runtime cancellation signal before F# exception normalization. The sequential
+Async bridge also calls the published runtime's two-argument function directly:
+Fable 5.20.1 lowers `Async.RunSynchronously` with a named cancellation token to
+`run_synchronously/3`, which the bundled BEAM runtime does not export.
+
 ## Ordering and cancellation
 
 The native controller creates a suspended body, then the parent acknowledges
@@ -44,6 +57,11 @@ signal. Bounded, unbounded and typed request waits inherit the cooperative token
 request aliases, monitors and queued duplicate replies are retired on settlement.
 Sequential Async adapters run inline with that token. No new Async scheduler is
 introduced on BEAM.
+
+Request operations resolve their ambient token when executed, so constructing or
+reusing an operation outside an actor does not detach it from its executing
+owner. Owned cancellation bypasses ordinary actor error handlers, matching
+.NET Async cancellation; finalizer defects still become failed exits.
 
 A returned `IDisposable` bypasses the immediate value checkpoint so `use`/`use!`
 can install `Using` first. Its delayed body checkpoints only after disposal is
@@ -67,6 +85,11 @@ caller death removes an abandoned observer even if the caller cannot unwind.
 No private process is created per stop request.
 
 ## Compatibility and limits
+
+Cooperative ownership retains the first observed descendant defect even if the
+parent handles its `ChildExited` notification and continues running. Legacy
+`Actor.spawnLinked` retains its existing handled-failure semantics on managed
+targets; only the opt-in ownership path retains failures observed before shutdown.
 
 Native `Actor.spawn`, links, `kill` and `stop` retain their existing compatibility
 contract. Native stop still confirms process death after force kill and cannot
@@ -114,7 +137,7 @@ On the bundled Fable 5.20.1 runtime it reports **2 invocations** and fails its
 one-invocation assertion. This is an intentional remaining upstream regression,
 not a passing Actor check or a replacement runtime.
 
-## Validation, 2026-10-12
+## Validation before the F# controller refactor, 2026-10-12
 
 All compilers are the released `dotnet fable` **5.20.1**. JavaScript and BEAM use
 its bundled published runtime. Python uses published `fable-library==5.20.1` and
@@ -166,3 +189,31 @@ The packed I/O catalog covers caller cancellation, command cancellation and
 retired delivery, owner stop waiting for admitted I/O, directory-handle closure
 and cleanup retries, and external-process exit, deadlines, byte limits and
 inherited-pipe policy. No native I/O cases are skipped.
+
+## F# controller refactor validation, 2026-10-12
+
+The refactor uses released Fable.Beam **5.2.0**, compiler **5.20.1** and the
+existing pinned OTP 27 toolchain. Python executes the generated suite directly
+with the restored `.venv/bin/python`: CPython **3.15.0** and published
+`fable-library==5.20.1`. No compiler or runtime is substituted.
+
+| Gate | Result |
+| --- | --- |
+| Actor .NET behavioral suite | 84 passed |
+| Actor JavaScript behavioral suite | 82 passed |
+| Actor Python behavioral suite | 82 passed |
+| Actor BEAM behavioral suite | 79 passed |
+| Library and test .NET build | 0 warnings, 0 errors |
+| Standalone BEAM library generation and compilation | Passed |
+| Timeflies BEAM generation and compilation | Passed |
+| Fantomas check and `git diff --check` | Passed |
+| Candidate NuGet pack | Passed; existing missing-readme warning |
+| Independent packed cooperative consumer | Passed on all four targets |
+
+New regressions cover requests constructed outside and reused across owners,
+cancellation through logging-and-rethrow handlers, retention of a child cleanup
+defect handled while its parent remains live, and unchanged legacy supervision.
+The packed smoke consumer restores into a fresh package cache without project
+references and checks idle cancellation, retained exits, once-only finalization
+and explicit release. Earlier packed actor and I/O catalog results above belong
+to the pre-refactor candidate and have not been rerun against this package.

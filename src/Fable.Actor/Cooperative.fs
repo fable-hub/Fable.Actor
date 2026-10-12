@@ -91,7 +91,7 @@ module Cooperative =
     /// Attach a cooperative child to the parent's existing owned lifetime.
     let spawnLinked (CooperativeActor(parent, _)) (body: CooperativeActor<'Message> -> ActorOp<unit>) : CooperativeActor<'Message> =
         let target =
-            Actor.spawnLinked parent (fun inbox -> body (CooperativeActor(inbox, null)))
+            Actor.spawnCooperativeLinked parent (fun inbox -> body (CooperativeActor(inbox, null)))
 
         CooperativeActor(target, null)
 
