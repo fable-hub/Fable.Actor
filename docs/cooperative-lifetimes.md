@@ -102,11 +102,11 @@ The executable regression is `test/native/beam_async_finalizer_probe.erl`:
 ```sh
 just test-beam
 mkdir -p build/runtime-probe
-erlc -o build/runtime-probe test/native/beam_async_finalizer_probe.erl
-erl -noshell -pa build/runtime-probe build/tests-beam/_build/default/lib/*/ebin \
+mise exec -- erlc -o build/runtime-probe test/native/beam_async_finalizer_probe.erl
+mise exec -- erl -noshell -pa build/runtime-probe build/tests-beam/_build/default/lib/*/ebin \
   -eval 'beam_async_finalizer_probe:run(), halt().'
 # Independently reproduce the plain Async Using defect:
-erl -noshell -pa build/runtime-probe build/tests-beam/_build/default/lib/*/ebin \
+mise exec -- erl -noshell -pa build/runtime-probe build/tests-beam/_build/default/lib/*/ebin \
   -eval 'beam_async_finalizer_probe:run_using(), halt().'
 ```
 
@@ -119,18 +119,20 @@ not a passing Actor check or a replacement runtime.
 All compilers are the released `dotnet fable` **5.20.1**. JavaScript and BEAM use
 its bundled published runtime. Python uses published `fable-library==5.20.1` and
 stable **CPython 3.15.0**, including the lockfile-selected cp315 wheel.
-BEAM validation uses **OTP 29.1.1 / Rebar 3.27.0**. An earlier 75-test Actor suite
-also passes on the host's OTP 25.
+The original BEAM validation uses **OTP 29.1.1 / Rebar 3.27.0**. The project now
+declares **OTP 27.3.4.9 / Rebar 3.27.0** in `mise.toml`; every BEAM recipe selects
+that toolchain explicitly for compilation and execution, including from isolated
+worktrees. An earlier 75-test Actor suite also passes on the host's OTP 25.
 
 | Gate | Result |
 | --- | --- |
 | Actor .NET behavioral suite | 80 passed |
 | Actor JavaScript behavioral suite | 78 passed |
 | Actor Python 3.15 behavioral suite | 78 passed |
-| Actor BEAM behavioral suite, OTP 29 | 76 passed |
+| Actor BEAM behavioral suite, pinned OTP 27 | 76 passed; original OTP 29 run also passes |
 | Library and test .NET builds | 0 warnings, 0 errors |
 | Standalone BEAM library generation and compilation | Passed; existing generated/runtime warnings |
-| Timeflies example | Clean OTP 27 / Rebar 3.19 build; HTTP and WebSocket smoke passed with 24 letter updates |
+| Timeflies example | Ordinary recipe selects pinned OTP 27 / Rebar 3.27; clean build and HTTP/WebSocket smoke pass with 24 letter updates |
 | Fantomas 8.0.8 check and `git diff --check` | Passed |
 | Candidate NuGet pack | Passed; pre-existing missing-readme metadata warning |
 | Independent packed actor consumer | 9 groups on all four targets; type-mismatch probes rejected |

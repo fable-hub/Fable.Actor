@@ -43,13 +43,14 @@ Browser                              BEAM Server (Cowboy + Fable.Actor)
 
 - .NET SDK 10+
 - Fable BEAM compiler
-- Erlang/OTP 27+
-- rebar3
+- mise (the project pins Erlang/OTP 27 and Rebar 3.27)
 
 ## Running
 
 ```sh
 # From the repository root
+mise trust
+mise install
 just run-timeflies
 ```
 

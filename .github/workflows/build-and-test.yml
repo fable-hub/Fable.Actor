@@ -18,11 +18,8 @@ jobs:
         with:
           dotnet-version: 10.x
 
-      - name: Setup Erlang/OTP
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: '27'
-          rebar3-version: '3'
+      - name: Setup declared Erlang/OTP and Rebar
+        uses: jdx/mise-action@v4
 
       - name: Setup Python
         uses: actions/setup-python@v7

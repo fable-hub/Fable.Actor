@@ -9,6 +9,13 @@ Fable.Actor is a cross-platform actor library for F#, compiled via [Fable](https
 ## Build
 
 Requires .NET SDK 10+ and the [Fable](https://github.com/fable-compiler/Fable) compiler.
+BEAM recipes use [mise](https://mise.jdx.dev/) to select the OTP 27 and Rebar
+versions declared in `mise.toml`, including from isolated worktrees.
+
+```sh
+mise trust
+mise install
+```
 
 ```sh
 just check    # Type-check F# with dotnet build
