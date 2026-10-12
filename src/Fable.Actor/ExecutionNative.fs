@@ -19,54 +19,77 @@ type WorkerMessage =
     | [<CompiledName("fable_actor_reply")>] Reply of Ref<obj> * obj
     | [<CompiledName("EXIT")>] Exit of Pid<obj> * obj
 
-let private contextKey = Atom.ofString "$fable_actor_cooperative"
-let private cleanupKey = Atom.ofString "$fable_actor_cooperative_cleanup"
+// decision: typed native tags avoid converting constant strings to atoms at each execution boundary
+type ExecutionKey =
+    | [<CompiledName("$fable_actor_cooperative")>] Context
+    | [<CompiledName("$fable_actor_cooperative_cleanup")>] Cleanup
+
 let private normal = Atom.ofString "normal"
 
-let private context () =
-    Erlang.get<Atom, obj * CancellationToken> contextKey
+// decision: inline context dispatch avoids helper calls on ordinary execution while retaining the shared builder
+// tradeoff: shared expressions look up execution context at runtime so preconstructed operations inherit their executing owner's cancellation
+let inline private context () =
+    Erlang.get<ExecutionKey, obj * CancellationToken> Context
 
-let private inCleanup () =
-    Erlang.get<Atom, bool> cleanupKey = Some true
+let inCleanup () =
+    Erlang.get<ExecutionKey, bool> Cleanup = Some true
 
-let token () : CancellationToken =
-    if inCleanup () then
-        CancellationToken.None
-    else
-        context ()
-        |> Option.map snd
-        |> Option.defaultWith (fun () -> CancellationToken.None)
+// decision: ordinary execution checks for lifetime context before inspecting cleanup state
+let inline token () : CancellationToken =
+    match context () with
+    | None -> CancellationToken.None
+    | Some(_, _) when inCleanup () -> CancellationToken.None
+    | Some(_, token) -> token
 
-let checkpoint () =
-    if not (inCleanup ()) then
-        context ()
-        |> Option.iter (fun (_, token) -> token.ThrowIfCancellationRequested())
+let inline checkpoint () =
+    match context () with
+    | Some(_, token) when not (inCleanup ()) -> token.ThrowIfCancellationRequested()
+    | _ -> ()
 
-// invariant: finalizers run without ambient cancellation checkpoints, and their defects remain observable
-let finalize compensation =
-    let previous = Erlang.put cleanupKey true
+let shield compensation =
+    let previous = Erlang.put Cleanup true
 
     try
         compensation ()
     finally
         match previous with
-        | Some value -> Erlang.put cleanupKey value |> ignore
-        | None -> Erlang.erase<Atom, bool> cleanupKey |> ignore
+        | Some value -> Erlang.put Cleanup value |> ignore
+        | None -> Erlang.erase<ExecutionKey, bool> Cleanup |> ignore
+
+// invariant: finalizers run without ambient cancellation checkpoints, and their defects remain observable
+// decision: ordinary finalizers invoke compensation directly because they have no owned token to shield
+let inline finalize compensation =
+    match context () with
+    | None -> compensation ()
+    | Some _ -> shield compensation
 
 // invariant: resource-producing continuations install Using before the next cancellation checkpoint
-let checkpointValue (value: obj) =
-    let resource: bool =
-        emitErlExpr
-            value
-            "(fun() -> Value = case is_reference($0) of true -> get($0); false -> $0 end, is_map(Value) andalso is_map_key(dispose, Value) end)()"
+// decision: ordinary values skip native resource-shape inspection because no lifetime cancellation checkpoint can reject them
+let inline checkpointValue (value: obj) =
+    match context () with
+    | None -> ()
+    | Some(_, token) ->
+        let resource: bool =
+            emitErlExpr
+                value
+                "(fun() -> ResourceValue__ = case is_reference($0) of true -> get($0); false -> $0 end, is_map(ResourceValue__) andalso is_map_key(dispose, ResourceValue__) end)()"
 
-    if not resource then
-        checkpoint ()
+        if not resource && not (inCleanup ()) then
+            token.ThrowIfCancellationRequested()
 
-let runAsync (operation: Async<'Value>) : 'Value =
-    // TODO(upstream Fable): replace this emit with Async.RunSynchronously(operation, cancellationToken = token ()) once BEAM optional-argument lowering uses run_synchronously/2 instead of nonexistent /3.
-    // decision: pass the ambient token explicitly because the published runtime exposes run_synchronously/2, not /3
-    emitErlExpr (operation, token ()) "fable_async:run_synchronously($0, $1)"
+let inline runAsync (operation: Async<'Value>) : 'Value =
+    match context () with
+    | None -> Async.RunSynchronously operation
+    | Some(_, cancellationToken) ->
+        // TODO(upstream Fable): replace this emit with Async.RunSynchronously(operation, cancellationToken = activeToken) once BEAM optional-argument lowering uses run_synchronously/2 instead of nonexistent /3.
+        // decision: pass the ambient token explicitly because the published runtime exposes run_synchronously/2, not /3
+        let activeToken =
+            if inCleanup () then
+                CancellationToken.None
+            else
+                cancellationToken
+
+        emitErlExpr (operation, activeToken) "fable_async:run_synchronously($0, $1)"
 
 // decision: preserve the raw cancellation signal before F# catch normalization can erase its identity
 // invariant: owned cancellation bypasses ordinary error handlers; cleanup defects still reach those handlers
@@ -101,7 +124,7 @@ let private bodyResult (token: CancellationToken) (body: unit -> unit) : ActorEx
     """
 
 // invariant: cancellation wakes an idle receive without becoming an application message
-let rec receive cont =
+let rec receiveOwned cont =
     checkpoint ()
 
     match Erlang.receive<WorkerMessage>() with
@@ -109,13 +132,19 @@ let rec receive cont =
         checkpoint ()
         cont value
     | Cancel
-    | Reply _ -> receive cont
-    | Exit(_, reason) when Erlang.exactEquals reason (box normal) -> receive cont
+    | Reply _ -> receiveOwned cont
+    | Exit(_, reason) when Erlang.exactEquals reason (box normal) -> receiveOwned cont
     | Exit(pid, reason) -> cont (box ({ Pid = box pid; Reason = reason }: ChildExited))
+
+// decision: ordinary receives use the existing native message protocol and avoid owned cancellation checks
+let inline receive cont =
+    match context () with
+    | None -> Fable.Actor.Platform.receiveMsg cont
+    | Some _ -> receiveOwned cont
 
 // invariant: the caller's execution context is restored after body finalization and before completion delivery
 let run scope (token: CancellationToken) body =
-    let previous = Erlang.put contextKey (scope, token)
+    let previous = Erlang.put Context (scope, token)
 
     try
         bodyResult token (fun () ->
@@ -123,8 +152,8 @@ let run scope (token: CancellationToken) body =
             body ())
     finally
         match previous with
-        | Some value -> Erlang.put contextKey value |> ignore
+        | Some value -> Erlang.put Context value |> ignore
         | None ->
-            Erlang.erase<Atom, obj * CancellationToken> contextKey
+            Erlang.erase<ExecutionKey, obj * CancellationToken> Context
             |> ignore
 #endif

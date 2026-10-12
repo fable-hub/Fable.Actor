@@ -1,0 +1,130 @@
+{
+  "baseline": "08eb4c4",
+  "before": "686884c",
+  "candidate_execution_source_sha256": "a01ce6f150833447136d7006dba338b6f4622ecd039be95426d5c75faa219536",
+  "cpu": 0,
+  "runtime_version": "Erlang/OTP 27 [erts-15.2.7.6] [source] [64-bit] [smp:1:1] [ds:1:1:10] [async-threads:1] [jit:ns]",
+  "samples_per_case_per_variant": 30,
+  "async_token_creations_per_1000_binds": {
+    "rc14": 0,
+    "before": 1000,
+    "candidate": 0
+  },
+  "cases": {
+    "bind": {
+      "rc14": {
+        "samples": 30,
+        "median_ns_per_operation": 61.5325,
+        "min_ns_per_operation": 59.91,
+        "max_ns_per_operation": 87.765,
+        "median_reductions_per_operation": 30.181955
+      },
+      "before": {
+        "samples": 30,
+        "median_ns_per_operation": 75.3325,
+        "min_ns_per_operation": 74.05,
+        "max_ns_per_operation": 81.855,
+        "median_reductions_per_operation": 57.182175
+      },
+      "candidate": {
+        "samples": 30,
+        "median_ns_per_operation": 73.1625,
+        "min_ns_per_operation": 71.74,
+        "max_ns_per_operation": 76.505,
+        "median_reductions_per_operation": 30.181955
+      }
+    },
+    "async": {
+      "rc14": {
+        "samples": 30,
+        "median_ns_per_operation": 152.7575,
+        "min_ns_per_operation": 147.465,
+        "max_ns_per_operation": 204.92,
+        "median_reductions_per_operation": 41.33395
+      },
+      "before": {
+        "samples": 30,
+        "median_ns_per_operation": 287.7575,
+        "min_ns_per_operation": 282.44,
+        "max_ns_per_operation": 312.36,
+        "median_reductions_per_operation": 89.33566250000001
+      },
+      "candidate": {
+        "samples": 30,
+        "median_ns_per_operation": 178.47,
+        "min_ns_per_operation": 174.525,
+        "max_ns_per_operation": 192.675,
+        "median_reductions_per_operation": 41.33395
+      }
+    },
+    "receive": {
+      "rc14": {
+        "samples": 30,
+        "median_ns_per_operation": 305.6425,
+        "min_ns_per_operation": 210.17,
+        "max_ns_per_operation": 348.82,
+        "median_reductions_per_operation": 32.767202499999996
+      },
+      "before": {
+        "samples": 30,
+        "median_ns_per_operation": 343.90999999999997,
+        "min_ns_per_operation": 240.455,
+        "max_ns_per_operation": 394.405,
+        "median_reductions_per_operation": 83.74709
+      },
+      "candidate": {
+        "samples": 30,
+        "median_ns_per_operation": 317.6425,
+        "min_ns_per_operation": 241.045,
+        "max_ns_per_operation": 401.825,
+        "median_reductions_per_operation": 32.755035
+      }
+    },
+    "finally": {
+      "rc14": {
+        "samples": 30,
+        "median_ns_per_operation": 681.4975,
+        "min_ns_per_operation": 619.795,
+        "max_ns_per_operation": 856.15,
+        "median_reductions_per_operation": 64.7710325
+      },
+      "before": {
+        "samples": 30,
+        "median_ns_per_operation": 782.145,
+        "min_ns_per_operation": 726.185,
+        "max_ns_per_operation": 920.535,
+        "median_reductions_per_operation": 138.7154925
+      },
+      "candidate": {
+        "samples": 30,
+        "median_ns_per_operation": 708.9975,
+        "min_ns_per_operation": 646.525,
+        "max_ns_per_operation": 842.805,
+        "median_reductions_per_operation": 64.77051499999999
+      }
+    },
+    "call": {
+      "rc14": {
+        "samples": 30,
+        "median_ns_per_operation": 1402.8,
+        "min_ns_per_operation": 1374.9,
+        "max_ns_per_operation": 1683.8,
+        "median_reductions_per_operation": 97.6695
+      },
+      "before": {
+        "samples": 30,
+        "median_ns_per_operation": 1565.05,
+        "min_ns_per_operation": 1531.6,
+        "max_ns_per_operation": 2406.7,
+        "median_reductions_per_operation": 150.6737
+      },
+      "candidate": {
+        "samples": 30,
+        "median_ns_per_operation": 1405.1,
+        "min_ns_per_operation": 1386.7,
+        "max_ns_per_operation": 1521.9,
+        "median_reductions_per_operation": 97.6695
+      }
+    }
+  }
+}
