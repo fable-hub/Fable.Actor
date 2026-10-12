@@ -1,8 +1,43 @@
 # Cooperative actor lifetimes
 
-The experimental `Cooperative` module provides lifetime authority separately from
+The optional `Fable.Actor.Lifetimes` module ships in the **Fable.Actor** NuGet
+package. It provides lifetime authority separately from
 an ordinary message reference. It supports observed cooperative cleanup without
 changing the native actor force-kill contract.
+
+## Module boundary
+
+`Actor` and actor expressions provide ordinary actors, request settlement,
+cancellation propagation and shielded actor-expression finalization.
+`Lifetimes` adds cooperative capabilities, the native controller, recursive
+ownership and retained-result policy. Both modules ship in the same assembly and
+NuGet package; selecting `Lifetimes.spawn` opts into the stronger contract.
+Ordinary actors allocate no cooperative lifetime controller.
+
+Both entry points use the same `actor { }` computation expression. The builder
+owns execution checkpoints, exception handling and `use`/`finally` cleanup;
+`Lifetimes.spawn` supplies the cooperative execution context and controller.
+`Lifetimes.spawnLinked owner` declares child ownership. Neither a second builder
+nor custom computation-expression keywords are needed to select lifetime policy.
+The shared builder does not make native `Actor.kill` or `Actor.stop` unwind work.
+
+Native execution support lives in `ExecutionNative.fs`, independently of the
+policy in `LifetimesNative.fs`. The public API remains in the `Fable.Actor`
+namespace, with `CooperativeActor` and `LifetimeRelease` representing its
+capability and release outcome. No new public execution API is introduced.
+Existing native actor semantics and managed ownership behavior remain unchanged.
+Managed actors still use their existing `ActorLifetime`; this extraction does not
+redesign that implementation.
+
+One package keeps installation, versioning and releases simple. Its source
+payload includes both modules, and Fable may generate the lifetime policy module
+for ordinary applications as well. The choice controls runtime policy and
+controller allocation, rather than guaranteeing a smaller generated artifact.
+
+Operation generations, admission ledgers, resource receipts, close coalescing
+and separate cleanup diagnostics belong to the consuming operation/session layer.
+A body exit alone does not prove an independently owned resource has settled.
+This module does not introduce that smaller contract or migrate Fish.
 
 ## Public contract
 
@@ -217,3 +252,28 @@ The packed smoke consumer restores into a fresh package cache without project
 references and checks idle cancellation, retained exits, once-only finalization
 and explicit release. Earlier packed actor and I/O catalog results above belong
 to the pre-refactor candidate and have not been rerun against this package.
+
+## Single-package module extraction validation, 2026-10-12
+
+The unreleased `Cooperative` API is now named `Lifetimes`; callers change the
+module qualifier and keep their actor-expression bodies. Execution support moves
+to `ExecutionNative.fs`, while `LifetimesNative.fs` retains the existing controller
+policy. No experimental body-completion API or second package is introduced.
+
+| Gate | Result |
+| --- | --- |
+| .NET behavioral suite | 84 passed |
+| JavaScript behavioral suite | 82 passed |
+| Python behavioral suite | 82 passed |
+| BEAM behavioral suite, pinned OTP 27 | 79 passed |
+| Library and test .NET build | 0 warnings, 0 errors |
+| Fantomas check and whitespace check | Passed |
+| Single NuGet package | One assembly and all execution/lifetime Fable sources; readme metadata present |
+| Independent packed consumer | Passed on all four targets |
+
+The packed consumer restores only `Fable.Actor` into a fresh package cache with
+no project references. It exercises ordinary request actors and a lifetime actor,
+checking cancellation, once-only cleanup, repeated terminal observation and
+release. This is a package smoke check, not a rerun of the Fish operation and I/O
+catalogs. Compiler and runtime pins remain unchanged; upstream mitigation comments
+and their removal conditions remain beside the extracted execution code.

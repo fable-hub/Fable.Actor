@@ -32,24 +32,24 @@ let private idleAndRepeated () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Cooperative.reference owner).Receive()
+                        let! _ = (Lifetimes.reference owner).Receive()
                         return ()
                     finally
                         Actor.cast cleaned Signal
                 })
 
         do! await 1 started
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Running)
-        let! result = Cooperative.stop deadline owner
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Running)
+        let! result = Lifetimes.stop deadline owner
         assertThat result (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        let! repeated = Cooperative.stop deadline owner
+        let! repeated = Lifetimes.stop deadline owner
         assertThat repeated (isEqualTo result)
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private timeoutAndRetry () =
@@ -57,7 +57,7 @@ let private timeoutAndRetry () =
         let started, cleaned, released = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -67,15 +67,15 @@ let private timeoutAndRetry () =
                 })
 
         do! await 1 started
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         let! cleanupCount = Actor.callWithTimeout deadline cleaned Read
         assertThat cleanupCount (isEqualTo 0)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private normalAndOwnedCleanup () =
@@ -84,11 +84,11 @@ let private normalAndOwnedCleanup () =
             barrier (), barrier (), barrier (), barrier ()
 
         let parent: CooperativeActor<unit> =
-            Cooperative.spawn (fun parent ->
+            Lifetimes.spawn (fun parent ->
                 actor {
                     try
                         let _child: CooperativeActor<unit> =
-                            Cooperative.spawnLinked parent (fun _ ->
+                            Lifetimes.spawnLinked parent (fun _ ->
                                 actor {
                                     try
                                         Actor.cast started Signal
@@ -97,24 +97,24 @@ let private normalAndOwnedCleanup () =
                                         Actor.cast cleaned Signal
                                 })
 
-                        let! _ = (Cooperative.reference parent).Receive()
+                        let! _ = (Lifetimes.reference parent).Receive()
                         return ()
                     finally
                         Actor.cast finalized Signal
                 })
 
         do! await 1 started
-        Actor.send (Cooperative.reference parent) ()
+        Actor.send (Lifetimes.reference parent) ()
         do! await 1 finalized
-        let! pending = Cooperative.stop shortDeadline parent
+        let! pending = Lifetimes.stop shortDeadline parent
         assertThat pending (isEqualTo StopResult.TimedOut)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline parent
+        let! stopped = Lifetimes.stop deadline parent
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Normal))
         do! await 1 cleaned
-        let! repeated = Cooperative.stop deadline parent
+        let! repeated = Lifetimes.stop deadline parent
         assertThat repeated (isEqualTo stopped)
-        assertThat (Cooperative.release parent) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release parent) (isEqualTo LifetimeRelease.Released)
     }
 
 let private cleanupDefect () =
@@ -123,24 +123,24 @@ let private cleanupDefect () =
         let original = System.Exception "cooperative cleanup defect"
 
         let owner: CooperativeActor<int> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Cooperative.reference owner).Receive()
+                        let! _ = (Lifetimes.reference owner).Receive()
                         return ()
                     finally
                         raise original
                 })
 
         do! await 1 started
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
 
         match stopped with
         | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
         | other -> failwithf "Cleanup failure was lost: %A" other
 
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private sleepAdapter () =
@@ -148,7 +148,7 @@ let private sleepAdapter () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -158,10 +158,10 @@ let private sleepAdapter () =
                 })
 
         do! await 1 started
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private acquireWith started released dispose : ActorOp<System.IDisposable> =
@@ -190,21 +190,21 @@ let private cancelledAcquisition () =
         let started, released, disposed = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     use! _resource = acquire started released disposed
                     return ()
                 })
 
         do! await 1 started
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         let! count = Actor.callWithTimeout deadline disposed Read
         assertThat count (isEqualTo 1)
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private busyLoop () =
@@ -212,7 +212,7 @@ let private busyLoop () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -224,10 +224,10 @@ let private busyLoop () =
                 })
 
         do! await 1 started
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 let private requestCancellation () =
@@ -240,7 +240,7 @@ let private requestCancellation () =
                 Continue())
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         let! _ = Actor.callResult 100000 CancellationToken.None service ()
@@ -250,11 +250,11 @@ let private requestCancellation () =
                 })
 
         do! await 1 started
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
         let! _ = Actor.stop deadline service
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
 #if FABLE_COMPILER_BEAM
@@ -263,7 +263,7 @@ let private normalCleanup () =
         let finalized, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         return ()
@@ -273,12 +273,12 @@ let private normalCleanup () =
                 })
 
         do! await 1 finalized
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Normal))
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Released)
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 #endif
 
@@ -293,7 +293,7 @@ let private requestVariants () =
                     Continue())
 
             let owner: CooperativeActor<int> =
-                Cooperative.spawn (fun owner ->
+                Lifetimes.spawn (fun owner ->
                     actor {
                         try
                             match kind with
@@ -308,11 +308,11 @@ let private requestVariants () =
                     })
 
             do! await 1 started
-            let! stopped = Cooperative.stop deadline owner
+            let! stopped = Lifetimes.stop deadline owner
             assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
             let! count = Actor.callWithTimeout deadline cleaned Read
             assertThat count (isEqualTo 1)
-            Cooperative.release owner |> ignore
+            Lifetimes.release owner |> ignore
             let! _ = Actor.stop deadline service
             let! _ = Actor.stop deadline started
             let! _ = Actor.stop deadline cleaned
@@ -325,7 +325,7 @@ let private retainedFailure () =
         let original = System.Exception "original cooperative body defect"
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         raise original
@@ -336,13 +336,13 @@ let private retainedFailure () =
         do! await 1 exited
 
         for _ in 1..3 do
-            let! stopped = Cooperative.stop deadline owner
+            let! stopped = Lifetimes.stop deadline owner
 
             match stopped with
             | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
             | other -> failwithf "Original body defect was lost: %A" other
 
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
         let! _ = Actor.stop deadline exited
         ()
     }
@@ -354,34 +354,34 @@ let private descendantDefect () =
         let childDefect = System.Exception "descendant cleanup defect"
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     try
                         let child: CooperativeActor<int> =
-                            Cooperative.spawnLinked owner (fun child ->
+                            Lifetimes.spawnLinked owner (fun child ->
                                 actor {
                                     try
                                         Actor.cast started Signal
-                                        let! _ = (Cooperative.reference child).Receive()
+                                        let! _ = (Lifetimes.reference child).Receive()
                                         return ()
                                     finally
                                         Actor.cast cleaned Signal
                                         raise childDefect
                                 })
 
-                        Cooperative.releaseWhenExited child
-                        let! _ = (Cooperative.reference owner).Receive()
+                        Lifetimes.releaseWhenExited child
+                        let! _ = (Lifetimes.reference owner).Receive()
                         raise original
                     finally
                         Actor.cast exited Signal
                 })
 
         do! await 1 started
-        Actor.send (Cooperative.reference owner) ()
+        Actor.send (Lifetimes.reference owner) ()
         do! await 1 exited
 
         for _ in 1..2 do
-            let! stopped = Cooperative.stop deadline owner
+            let! stopped = Lifetimes.stop deadline owner
 
             match stopped with
             | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
@@ -389,7 +389,7 @@ let private descendantDefect () =
 
         let! count = Actor.callWithTimeout deadline cleaned Read
         assertThat count (isEqualTo 1)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; exited; cleaned ] do
             let! _ = Actor.stop deadline events
@@ -401,13 +401,13 @@ let private transitiveOwnership () =
         let started, released, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     let child: CooperativeActor<int> =
-                        Cooperative.spawnLinked owner (fun child ->
+                        Lifetimes.spawnLinked owner (fun child ->
                             actor {
                                 let leaf: CooperativeActor<int> =
-                                    Cooperative.spawnLinked child (fun _ ->
+                                    Lifetimes.spawnLinked child (fun _ ->
                                         actor {
                                             try
                                                 Actor.cast started Signal
@@ -416,25 +416,25 @@ let private transitiveOwnership () =
                                                 Actor.cast cleaned Signal
                                         })
 
-                                Cooperative.releaseWhenExited leaf
-                                let! _ = (Cooperative.reference child).Receive()
+                                Lifetimes.releaseWhenExited leaf
+                                let! _ = (Lifetimes.reference child).Receive()
                                 return ()
                             })
 
-                    Cooperative.releaseWhenExited child
-                    let! _ = (Cooperative.reference owner).Receive()
+                    Lifetimes.releaseWhenExited child
+                    let! _ = (Lifetimes.reference owner).Receive()
                     return ()
                 })
 
         do! await 1 started
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         let! count = Actor.callWithTimeout deadline cleaned Read
         assertThat count (isEqualTo 1)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; released; cleaned ] do
             let! _ = Actor.stop deadline events
@@ -444,45 +444,45 @@ let private transitiveOwnership () =
 let private invalidDeadline () =
     actor {
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun owner -> actor { let! _ = (Cooperative.reference owner).Receive() in return () })
+            Lifetimes.spawn (fun owner -> actor { let! _ = (Lifetimes.reference owner).Receive() in return () })
 
         for ms in [ 0; -1 ] do
             let mutable rejected = false
 
             try
-                Cooperative.stop ms owner |> ignore
+                Lifetimes.stop ms owner |> ignore
             with error ->
                 assertThat (error.Message.Contains "Cleanup deadline must be positive") isTrue
                 rejected <- true
 
             assertThat rejected isTrue
 
-        assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Running)
-        let! _ = Cooperative.stop deadline owner
-        Cooperative.release owner |> ignore
+        assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Running)
+        let! _ = Lifetimes.stop deadline owner
+        Lifetimes.release owner |> ignore
     }
 
 let private terminalAttachment () =
     actor {
         let entered = barrier ()
-        let owner: CooperativeActor<unit> = Cooperative.spawn (fun _ -> actor { return () })
-        let! stopped = Cooperative.stop deadline owner
+        let owner: CooperativeActor<unit> = Lifetimes.spawn (fun _ -> actor { return () })
+        let! stopped = Lifetimes.stop deadline owner
         // The body can race an immediate cancellation; either result is terminal.
         assertThat (completed stopped) isTrue
         let mutable rejected = false
 
         try
             let child: CooperativeActor<unit> =
-                Cooperative.spawnLinked owner (fun _ -> actor { Actor.cast entered Signal })
+                Lifetimes.spawnLinked owner (fun _ -> actor { Actor.cast entered Signal })
 
-            Cooperative.releaseWhenExited child
+            Lifetimes.releaseWhenExited child
         with _ ->
             rejected <- true
 
         assertThat rejected isTrue
         let! count = Actor.callWithTimeout deadline entered Read
         assertThat count (isEqualTo 0)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
         let! _ = Actor.stop deadline entered
         ()
     }
@@ -506,7 +506,7 @@ let private retention () =
         let started, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     Actor.cast started Signal
                     do! noncooperative released
@@ -519,18 +519,18 @@ let private retention () =
         let messages = queueLength ()
 
         for _ in 1..20 do
-            let! stopped = Cooperative.stop 1 owner
+            let! stopped = Lifetimes.stop 1 owner
             assertThat stopped (isEqualTo StopResult.TimedOut)
             // This acknowledged request follows unwait from the same sender.
-            assertThat (Cooperative.release owner) (isEqualTo LifetimeRelease.Running)
+            assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Running)
             assertThat (nativeMonitors guard) (isEqualTo baseline)
 
         assertThat (monitorCount ()) (isEqualTo callerMonitors)
         assertThat (queueLength ()) (isEqualTo messages)
         Actor.cast released Signal
-        let! _ = Cooperative.stop deadline owner
+        let! _ = Lifetimes.stop deadline owner
         let observed = monitorNative guard
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
         assertThat (nativeDown observed) isTrue
 
         for events in [ started; released ] do
@@ -547,11 +547,11 @@ let private creatorDeath () =
             Actor.spawn (fun creator ->
                 actor {
                     let owner: CooperativeActor<int> =
-                        Cooperative.spawn (fun owner ->
+                        Lifetimes.spawn (fun owner ->
                             actor {
                                 try
                                     Actor.cast started Signal
-                                    let! _ = (Cooperative.reference owner).Receive()
+                                    let! _ = (Lifetimes.reference owner).Receive()
                                     return ()
                                 finally
                                     Actor.cast cleaned Signal
@@ -581,11 +581,11 @@ let private shieldedCleanup () =
             barrier (), barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Cooperative.reference owner).Receive()
+                        let! _ = (Lifetimes.reference owner).Receive()
                         return ()
                     finally
                         Actor.cast finalizing Signal
@@ -600,17 +600,17 @@ let private shieldedCleanup () =
                 })
 
         do! await 1 started
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         do! await 1 finalizing
         let! count = Actor.callWithTimeout deadline cleaned Read
         assertThat count (isEqualTo 0)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         let! count = Actor.callWithTimeout deadline cleaned Read
         assertThat count (isEqualTo 1)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; finalizing; released; cleaned ] do
             let! _ = Actor.stop deadline events
@@ -624,7 +624,7 @@ let private lateCleanupDefect () =
         let original = System.Exception "late acquisition cleanup defect"
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     use! _resource =
                         acquireWith started released (fun () ->
@@ -635,10 +635,10 @@ let private lateCleanupDefect () =
                 })
 
         do! await 1 started
-        let! pending = Cooperative.stop shortDeadline owner
+        let! pending = Lifetimes.stop shortDeadline owner
         assertThat pending (isEqualTo StopResult.TimedOut)
         Actor.cast released Signal
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
 
         match stopped with
         | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
@@ -646,7 +646,7 @@ let private lateCleanupDefect () =
 
         let! count = Actor.callWithTimeout deadline disposed Read
         assertThat count (isEqualTo 1)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; released; disposed ] do
             let! _ = Actor.stop deadline events
@@ -661,30 +661,30 @@ let private cancellationRace () =
             let entered = barrier ()
 
             let owner: CooperativeActor<unit> =
-                Cooperative.spawn (fun owner ->
+                Lifetimes.spawn (fun owner ->
                     actor {
                         try
                             Actor.cast entered Signal
-                            let! _ = (Cooperative.reference owner).Receive()
+                            let! _ = (Lifetimes.reference owner).Receive()
                             return ()
                         finally
                             Actor.cast cleaned Signal
                     })
 
             do! await 1 entered
-            Actor.send (Cooperative.reference owner) ()
-            let! first = Cooperative.stop deadline owner
+            Actor.send (Lifetimes.reference owner) ()
+            let! first = Lifetimes.stop deadline owner
 
             match first with
             | StopResult.Completed ActorExit.Normal
             | StopResult.Completed ActorExit.Cancelled -> ()
             | other -> failwithf "Receive/cancel race did not settle: %A" other
 
-            let! repeated = Cooperative.stop deadline owner
+            let! repeated = Lifetimes.stop deadline owner
             assertThat repeated (isEqualTo first)
             let! count = Actor.callWithTimeout deadline cleaned Read
             assertThat count (isEqualTo iteration)
-            Cooperative.release owner |> ignore
+            Lifetimes.release owner |> ignore
             let! _ = Actor.stop deadline entered
             ()
 
@@ -697,7 +697,7 @@ let private failedText () =
         let exited = barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         failwith "body text defect"
@@ -706,13 +706,13 @@ let private failedText () =
                 })
 
         do! await 1 exited
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
 
         match stopped with
         | StopResult.Completed(ActorExit.Failed error) -> assertThat error.Message (isEqualTo "body text defect")
         | other -> failwithf "Text defect was lost: %A" other
 
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
         let! _ = Actor.stop deadline exited
         ()
     }
@@ -723,7 +723,7 @@ let private abandonedObserver () =
         let started, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     Actor.cast started Signal
                     do! noncooperative released
@@ -734,7 +734,7 @@ let private abandonedObserver () =
         let baseline = nativeMonitors guard
 
         let waiter: Actor<unit> =
-            Actor.spawn (fun _ -> actor { let! _ = Cooperative.stop 100000 owner in return () })
+            Actor.spawn (fun _ -> actor { let! _ = Lifetimes.stop 100000 owner in return () })
 
         let waitForCount expected : bool =
             emitErlExpr
@@ -757,8 +757,8 @@ let private abandonedObserver () =
         let! _ = Actor.stop deadline waiter
         assertThat (waitForCount baseline) isTrue
         Actor.cast released Signal
-        let! _ = Cooperative.stop deadline owner
-        Cooperative.release owner |> ignore
+        let! _ = Lifetimes.stop deadline owner
+        Lifetimes.release owner |> ignore
 
         for events in [ started; released ] do
             let! _ = Actor.stop deadline events
@@ -772,7 +772,7 @@ let private deferredRelease () =
         let started, released, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun _ ->
+            Lifetimes.spawn (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -784,7 +784,7 @@ let private deferredRelease () =
         do! await 1 started
         let guard = nativeGuard owner
         let observed = monitorNative guard
-        Cooperative.releaseWhenExited owner
+        Lifetimes.releaseWhenExited owner
         let running: bool = emitErlExpr guard "is_process_alive($0)"
         assertThat running isTrue
         let! count = Actor.callWithTimeout deadline cleaned Read
@@ -813,7 +813,7 @@ let private preconstructedRequest () =
 
         for n in 1..2 do
             let owner: CooperativeActor<unit> =
-                Cooperative.spawn (fun _ ->
+                Lifetimes.spawn (fun _ ->
                     actor {
                         try
                             let! _ = operation
@@ -823,10 +823,10 @@ let private preconstructedRequest () =
                     })
 
             do! await n admitted
-            let! stopped = Cooperative.stop 500 owner
+            let! stopped = Lifetimes.stop 500 owner
             assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
             do! await n cleaned
-            Cooperative.release owner |> ignore
+            Lifetimes.release owner |> ignore
 
         for events in [ admitted; cleaned ] do
             let! _ = Actor.stop deadline events
@@ -841,12 +841,12 @@ let private cancellationHandler () =
         let started, handled, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     try
                         try
                             Actor.cast started Signal
-                            let! _ = (Cooperative.reference owner).Receive()
+                            let! _ = (Lifetimes.reference owner).Receive()
                             return ()
                         with error ->
                             Actor.cast handled Signal
@@ -856,12 +856,12 @@ let private cancellationHandler () =
                 })
 
         do! await 1 started
-        let! stopped = Cooperative.stop deadline owner
+        let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
         let! count = Actor.callWithTimeout deadline handled Read
         assertThat count (isEqualTo 0)
-        Cooperative.release owner |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; handled; cleaned ] do
             let! _ = Actor.stop deadline events
@@ -875,14 +875,14 @@ let private earlierDescendantFailure () =
         let original = System.Exception "earlier descendant cleanup defect"
 
         let owner: CooperativeActor<obj> =
-            Cooperative.spawn (fun owner ->
+            Lifetimes.spawn (fun owner ->
                 actor {
                     let child: CooperativeActor<unit> =
-                        Cooperative.spawnLinked owner (fun child ->
+                        Lifetimes.spawnLinked owner (fun child ->
                             actor {
                                 try
                                     Actor.cast started Signal
-                                    let! _ = (Cooperative.reference child).Receive()
+                                    let! _ = (Lifetimes.reference child).Receive()
                                     return ()
                                 finally
                                     raise original
@@ -892,7 +892,7 @@ let private earlierDescendantFailure () =
 
                     let rec loop () =
                         actor {
-                            let! message = (Cooperative.reference owner).Receive()
+                            let! message = (Lifetimes.reference owner).Receive()
 
                             match Actor.tryAsChildExited message with
                             | Some exited ->
@@ -910,22 +910,22 @@ let private earlierDescendantFailure () =
         do! await 1 started
         let! child = Actor.callWithTimeout deadline handles None
         let child = Option.get child
-        Actor.send (Cooperative.reference child) ()
+        Actor.send (Lifetimes.reference child) ()
         do! await 1 handled
         // decision: a subsequent parent-handled message proves the child failed while its owner stayed live
-        Actor.send (Cooperative.reference owner) (box "checkpoint")
+        Actor.send (Lifetimes.reference owner) (box "checkpoint")
         do! await 1 checkedEvents
-        do! observeExit (Cooperative.reference owner)
+        do! observeExit (Lifetimes.reference owner)
 
         for _ in 1..2 do
-            let! stopped = Cooperative.stop deadline owner
+            let! stopped = Lifetimes.stop deadline owner
 
             match stopped with
             | StopResult.Completed(ActorExit.Failed error) -> assertThat error (isEqualTo original)
             | other -> failwithf "Earlier descendant failure was lost: %A" other
 
-        Cooperative.release child |> ignore
-        Cooperative.release owner |> ignore
+        Lifetimes.release child |> ignore
+        Lifetimes.release owner |> ignore
 
         for events in [ started; handled; checkedEvents ] do
             let! _ = Actor.stop deadline events

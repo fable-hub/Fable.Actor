@@ -262,10 +262,17 @@ MIT
 
 ## Experimental cooperative lifetimes
 
-`Cooperative.spawn` returns a creator-held `CooperativeActor<Message>` capability.
-Share `Cooperative.reference owner` for messaging; retain the capability for
-ownership and stop observation. `Cooperative.spawnLinked` registers a child
-before its body starts. `Cooperative.stop` observes the body and every owned
+The optional `Fable.Actor.Lifetimes` module ships in the **Fable.Actor** NuGet
+package. Use `Actor.spawn` for ordinary actors, or `Lifetimes.spawn` when you need
+recursive ownership and retained terminal outcomes. The native lifetime controller
+is allocated only by `Lifetimes.spawn` and `Lifetimes.spawnLinked`. Both use the
+same `actor { }` builder as ordinary actors; lifetime policy is selected at spawn,
+without a second builder or custom keywords.
+
+`Lifetimes.spawn` returns a creator-held `CooperativeActor<Message>` capability.
+Share `Lifetimes.reference owner` for messaging; retain the capability for
+ownership and stop observation. `Lifetimes.spawnLinked` registers a child
+before its body starts. `Lifetimes.stop` observes the body and every owned
 cooperative descendant, retaining `Normal`, `Cancelled`, or the original terminal
 failure for repeated observation. A positive deadline returns `TimedOut` without
 killing work; later observation can succeed.
@@ -278,7 +285,7 @@ actor finalizers run once with ambient cancellation shielded. Existing native
 finalizers. Calling them through the message reference leaves the cooperative
 cleanup guarantee.
 
-Release completed capabilities with `Cooperative.release`. `Running` leaves
+Release completed capabilities with `Lifetimes.release`. `Running` leaves
 observation available; `Released` relinquishes it. `releaseWhenExited` relinquishes
 future observation while retaining ownership until exit. Do not reuse relinquished
 capabilities. Creator death cancels native work and reclaims its observation state

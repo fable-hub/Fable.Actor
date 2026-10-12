@@ -18,10 +18,12 @@ type LifetimeRelease =
 /// Native kill remains available through the ordinary Actor reference as an advanced escape hatch.
 /// The once-only shielded finalizer contract belongs to the actor CE, not to nested plain Async finalizers.
 ///
+/// decision: keeps strong lifetime policy opt-in through a separate module in the existing package
+/// decision: supplies lifetime context at spawn so ordinary and cooperative actors share the same actor expression builder
 /// decision: separates lifetime authority from message references to keep native kill compatibility explicit
 /// tradeoff: a long-lived BEAM creator must release completed capabilities to reclaim retained terminal outcomes
 [<RequireQualifiedAccess>]
-module Cooperative =
+module Lifetimes =
     /// Obtain an ordinary message reference without exposing cooperative lifetime control.
     let reference (CooperativeActor(target, _)) = target
 
@@ -34,7 +36,7 @@ module Cooperative =
 
     let private create parent body =
         let handle =
-            CooperativeNative.spawn parent (fun handle ->
+            LifetimesNative.spawn parent (fun handle ->
                 body (CooperativeActor({ Pid = workerPid handle }, handle))
                 |> fun work -> work.Run ignore)
 
@@ -58,7 +60,7 @@ module Cooperative =
         {
             Run =
                 fun cont ->
-                    match CooperativeNative.stop handle deadline with
+                    match LifetimesNative.stop handle deadline with
                     | Some result -> cont (StopResult.Completed(unbox<ActorExit> result))
                     | None -> cont StopResult.TimedOut
         }
@@ -74,11 +76,11 @@ module Cooperative =
     /// Relinquish future observation. Work remains owned; native metadata is released only after actual exit.
     /// The capability must not be used again after this call. Message references retain their usual behavior.
     let releaseWhenExited (CooperativeActor(_, handle)) =
-        CooperativeNative.releaseWhenExited handle
+        LifetimesNative.releaseWhenExited handle
 
     /// Release terminal native observation state. Running work is left owned and observation remains available.
     let release (CooperativeActor(_, handle)) =
-        if CooperativeNative.release handle then
+        if LifetimesNative.release handle then
             LifetimeRelease.Released
         else
             LifetimeRelease.Running

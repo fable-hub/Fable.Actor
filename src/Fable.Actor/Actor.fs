@@ -39,7 +39,7 @@ type Actor<'Msg> = {
 } with
 
     member _.Receive() : ActorOp<'Msg> = {
-        Run = fun cont -> CooperativeNative.receive (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> ExecutionNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
     member this.Post(msg: 'Msg) = sendMsg this.Pid msg
@@ -49,14 +49,14 @@ type ActorBuilder() =
         Run =
             fun cont ->
                 op.Run(fun value ->
-                    CooperativeNative.checkpointValue (box value)
+                    ExecutionNative.checkpointValue (box value)
                     (f value).Run cont)
     }
 
     member _.Return(value: 'T) : ActorOp<'T> = {
         Run =
             fun cont ->
-                CooperativeNative.checkpointValue (box value)
+                ExecutionNative.checkpointValue (box value)
                 cont value
     }
 
@@ -66,7 +66,7 @@ type ActorBuilder() =
     member _.Delay(f: unit -> ActorOp<'T>) : ActorOp<'T> = {
         Run =
             fun cont ->
-                CooperativeNative.checkpoint ()
+                ExecutionNative.checkpoint ()
                 (f ()).Run cont
     }
 
@@ -75,7 +75,7 @@ type ActorBuilder() =
     }
 
     member _.TryWith(body: ActorOp<'T>, handler: exn -> ActorOp<'T>) : ActorOp<'T> = {
-        Run = fun cont -> CooperativeNative.tryWith (fun () -> body.Run cont) (fun ex -> (handler ex).Run cont)
+        Run = fun cont -> ExecutionNative.tryWith (fun () -> body.Run cont) (fun ex -> (handler ex).Run cont)
     }
 
     /// Run cleanup when a CPS body completes or raises.
@@ -91,10 +91,10 @@ type ActorBuilder() =
                 (try
                     body.Run(fun value -> result <- value)
                  with _ ->
-                     CooperativeNative.finalize compensation
+                     ExecutionNative.finalize compensation
                      reraise ())
 
-                CooperativeNative.finalize compensation
+                ExecutionNative.finalize compensation
                 cont result
     }
 
@@ -111,7 +111,7 @@ type ActorBuilder() =
         Run =
             fun cont ->
                 let rec loop () =
-                    CooperativeNative.checkpoint ()
+                    ExecutionNative.checkpoint ()
                     if guard () then body.Run(fun () -> loop ()) else cont ()
 
                 loop ()
@@ -128,8 +128,8 @@ type ActorBuilder() =
     member _.Bind(op: Async<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
         Run =
             fun cont ->
-                let value = CooperativeNative.runAsync op
-                CooperativeNative.checkpointValue (box value)
+                let value = ExecutionNative.runAsync op
+                ExecutionNative.checkpointValue (box value)
                 (f value).Run cont
     }
 
@@ -457,7 +457,7 @@ module Actor =
 
         // invariant: reused operations inherit the executing actor's token rather than their constructing process's token
         {
-            Run = fun cont -> (callCore (Some deadline) token (CooperativeNative.token ()) target msg).Run cont
+            Run = fun cont -> (callCore (Some deadline) token (ExecutionNative.token ()) target msg).Run cont
         }
 
     let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
@@ -493,9 +493,9 @@ module Actor =
     let call target msg : ActorOp<'Reply> = {
         Run =
             fun cont ->
-                (callCore None System.Threading.CancellationToken.None (CooperativeNative.token ()) target msg)
+                (callCore None System.Threading.CancellationToken.None (ExecutionNative.token ()) target msg)
                     .Run(fun result ->
-                        CooperativeNative.checkpoint ()
+                        ExecutionNative.checkpoint ()
                         cont (replyOrRaise result))
     }
 
@@ -512,9 +512,9 @@ module Actor =
         {
             Run =
                 fun cont ->
-                    (callCore (Some deadline) System.Threading.CancellationToken.None (CooperativeNative.token ()) target msg)
+                    (callCore (Some deadline) System.Threading.CancellationToken.None (ExecutionNative.token ()) target msg)
                         .Run(fun result ->
-                            CooperativeNative.checkpoint ()
+                            ExecutionNative.checkpoint ()
                             cont (replyOrRaise result))
         }
 
@@ -531,7 +531,7 @@ module Actor =
 
     /// Receive next message (free function).
     let receive<'Msg> () : ActorOp<'Msg> = {
-        Run = fun cont -> CooperativeNative.receive (fun raw -> cont (unbox<'Msg> raw))
+        Run = fun cont -> ExecutionNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
 
 #else

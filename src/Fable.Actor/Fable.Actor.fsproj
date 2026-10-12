@@ -5,6 +5,7 @@
     <Author>Dag Brattli</Author>
     <Copyright>Dag Brattli</Copyright>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <WarnOn>3390;$(WarnOn)</WarnOn>
     <PackageTags>fsharp;fable;actor;actor-model;erlang;beam;python;javascript</PackageTags>
     <Description>Cross-platform actor library for F# compiled via Fable to BEAM, Python, and JavaScript</Description>
@@ -14,9 +15,10 @@
     <Compile Include="Types.fs" />
     <Compile Include="Platform.fs" />
     <Compile Include="Lifecycle.fs" />
-    <Compile Include="CooperativeNative.fs" />
+    <Compile Include="ExecutionNative.fs" />
     <Compile Include="Actor.fs" />
-    <Compile Include="Cooperative.fs" />
+    <Compile Include="LifetimesNative.fs" />
+    <Compile Include="Lifetimes.fs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="*.fsproj; *.fs; *.fsi" PackagePath="fable\" />
