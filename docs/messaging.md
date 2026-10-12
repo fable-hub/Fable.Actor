@@ -66,8 +66,8 @@ Timeout and cancellation do not retract a delivered message or undo its work.
 Calls ignore late replies and never retry automatically. Awaiting each reply
 keeps the caller from submitting its next request before the current reply.
 
-From an `async { }` host, use `callAsync`, `callAsyncWithTimeout` or
-`callResultAsync`. Inside portable actor bodies, use `actor { }` and the ordinary
+From an `async { }` host, use `asyncCall`, `asyncCallWithTimeout` or
+`asyncCallResult`. Inside portable actor bodies, use `actor { }` and the ordinary
 call operations; [Platform notes](platforms.md) explain the distinction.
 
 ## Timers

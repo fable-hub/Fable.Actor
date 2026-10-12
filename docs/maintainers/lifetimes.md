@@ -61,6 +61,18 @@ Broader downstream actor and file/directory/process catalogs and live Timeflies
 smoke belong to earlier candidates and were not rerun against the final extraction.
 Historical details remain in Git history; they are not additional current validation.
 
+## Async API naming
+
+Explicit F# Async bridges use an `async` prefix: `Actor.asyncCall`,
+`Actor.asyncCallWithTimeout`, `Actor.asyncCallResult`, `Actor.asyncStop` and
+`Lifetimes.asyncStop`. Actor-expression operations keep their existing names.
+
+The published Actor names `callAsync`, `callAsyncWithTimeout`, `callResultAsync`
+and `stopAsync` remain deprecated forwarding aliases with compiler migration
+messages. The new lifetime bridge is named `asyncStop` directly.
+The renamed bridges pass the same four behavioral suites; .NET metadata checks
+verify their Async return types and the aliases' migration warnings.
+
 ## Independent Fable runtime defects
 
 These published BEAM Async defects remain outside the lifetime controller:

@@ -65,8 +65,9 @@ module Lifetimes =
                     | None -> cont StopResult.TimedOut
         }
 
-    /// Async bridge for advanced hosts; sequential execution stays in the calling BEAM process.
-    let stopAsync deadline target : Async<StopResult> =
+    /// Observe cooperative shutdown through Async with a positive deadline in milliseconds.
+    /// Sequential execution stays in the calling BEAM process.
+    let asyncStop deadline target : Async<StopResult> =
         async {
             let mutable result = StopResult.TimedOut
             (stop deadline target).Run(fun exit -> result <- exit)
@@ -100,8 +101,8 @@ module Lifetimes =
     /// Observe body and descendant cleanup using the target's existing cooperative runtime.
     let stop deadline (CooperativeActor(target, _)) = Actor.stop deadline target
 
-    /// Async bridge for advanced hosts.
-    let stopAsync deadline (CooperativeActor(target, _)) = Actor.stopAsync deadline target
+    /// Observe cooperative shutdown through Async with a positive deadline in milliseconds.
+    let asyncStop deadline (CooperativeActor(target, _)) = Actor.asyncStop deadline target
 
     /// Relinquish future observation; managed runtimes reclaim metadata when references disappear.
     let releaseWhenExited (_: CooperativeActor<'Message>) = ()

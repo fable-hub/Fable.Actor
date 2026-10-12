@@ -200,17 +200,17 @@ let private timeoutTests =
     )
 
 // ============================================================================
-// callAsync
+// asyncCall
 // ============================================================================
 
-let private callAsyncTests =
+let private asyncCallTests =
     testList (
-        "callAsync",
+        "asyncCall",
         [
             testAsync (
                 "a reply can be let!-bound from inside an async { } block",
                 // Regression target for Fable.Reactive's mapActor: on BEAM `call` is CPS and cannot
-                // be let!-bound in async { }, but callAsync can. The caller (this process) and the
+                // be let!-bound in async { }, but asyncCall can. The caller (this process) and the
                 // server (a distinct process from Actor.start) must not deadlock.
                 fun _ ->
                     toAsync (
@@ -230,7 +230,7 @@ let private callAsyncTests =
 
                             let! count =
                                 async {
-                                    let! c = Actor.callAsync server GetCount
+                                    let! c = Actor.asyncCall server GetCount
                                     return c
                                 }
 
@@ -241,4 +241,4 @@ let private callAsyncTests =
         ]
     )
 
-let tests = testList ("Builder", [ controlFlowTests; timeoutTests; callAsyncTests ])
+let tests = testList ("Builder", [ controlFlowTests; timeoutTests; asyncCallTests ])

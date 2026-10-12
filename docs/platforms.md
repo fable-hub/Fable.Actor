@@ -21,7 +21,7 @@ operations can be awaited inside it, but arbitrary parallel Async work is not
 automatically registered as an owned actor child.
 
 Host code using `async { }` can call the explicit Async bridges, such as
-`Actor.callResultAsync`, `Actor.stopAsync` and `Lifetimes.stopAsync`. These bridges
+`Actor.asyncCallResult`, `Actor.asyncStop` and `Lifetimes.asyncStop`. These bridges
 do not change the target's shutdown contract. On BEAM, sequential Async executes
 in the calling process.
 

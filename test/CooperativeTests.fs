@@ -17,7 +17,7 @@ let private noncooperative events =
     {
         Run =
             fun cont ->
-                Async.RunSynchronously(Actor.callAsync events (Await 1))
+                Async.RunSynchronously(Actor.asyncCall events (Await 1))
                 |> ignore
 
                 cont ()
@@ -47,7 +47,7 @@ let private idleAndRepeated () =
         let! result = Lifetimes.stop deadline owner
         assertThat result (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        let! repeated = Lifetimes.stop deadline owner
+        let! repeated = Lifetimes.asyncStop deadline owner
         assertThat repeated (isEqualTo result)
         assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
@@ -253,7 +253,7 @@ let private requestCancellation () =
         let! stopped = Lifetimes.stop deadline owner
         assertThat stopped (isEqualTo (StopResult.Completed ActorExit.Cancelled))
         do! await 1 cleaned
-        let! _ = Actor.stop deadline service
+        let! _ = Actor.asyncStop deadline service
         assertThat (Lifetimes.release owner) (isEqualTo LifetimeRelease.Released)
     }
 
@@ -299,8 +299,8 @@ let private requestVariants () =
                             match kind with
                             | 0 -> let! _ = Actor.call service () in return ()
                             | 1 -> let! _ = Actor.callWithTimeout 100000 service () in return ()
-                            | 2 -> let! _ = Actor.callAsync service () in return ()
-                            | _ -> let! _ = Actor.callResultAsync 100000 CancellationToken.None service () in return ()
+                            | 2 -> let! _ = Actor.asyncCall service () in return ()
+                            | _ -> let! _ = Actor.asyncCallResult 100000 CancellationToken.None service () in return ()
 
                             failwith "Cancelled request resumed user code"
                         finally

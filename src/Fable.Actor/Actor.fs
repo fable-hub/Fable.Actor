@@ -362,7 +362,8 @@ module Actor =
                     )
         }
 
-    let stopAsync cleanupDeadline target : Async<StopResult> =
+    /// Async bridge for shutdown observation; cleanupDeadline is a positive number of milliseconds.
+    let asyncStop cleanupDeadline target : Async<StopResult> =
         async {
             let mutable result = StopResult.TimedOut
             (stop cleanupDeadline target).Run(fun value -> result <- value)
@@ -460,7 +461,7 @@ module Actor =
             Run = fun cont -> (callCore (Some deadline) token (ExecutionNative.token ()) target msg).Run cont
         }
 
-    let private callCoreAsync timeout token target msg : Async<CallResult<'Reply>> =
+    let private asyncCallCore timeout token target msg : Async<CallResult<'Reply>> =
         async {
             let! ambient = Async.CancellationToken
 
@@ -483,11 +484,12 @@ module Actor =
                         | _ -> ok result)
         }
 
-    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
+    /// Async bridge for a bounded request with explicit outcomes; deadline is positive milliseconds.
+    let asyncCallResult deadline token target msg : Async<CallResult<'Reply>> =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
-        callCoreAsync (Some deadline) token target msg
+        asyncCallCore (Some deadline) token target msg
 
     /// Await a reply without a reply deadline, preserving rc.11's default. Native target death settles the wait.
     let call target msg : ActorOp<'Reply> = {
@@ -499,9 +501,10 @@ module Actor =
                         cont (replyOrRaise result))
     }
 
-    let callAsync target msg : Async<'Reply> =
+    /// Async bridge for awaiting a reply without a reply deadline.
+    let asyncCall target msg : Async<'Reply> =
         async {
-            let! result = callCoreAsync None System.Threading.CancellationToken.None target msg
+            let! result = asyncCallCore None System.Threading.CancellationToken.None target msg
             return replyOrRaise result
         }
 
@@ -518,13 +521,14 @@ module Actor =
                             cont (replyOrRaise result))
         }
 
-    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
+    /// Async bridge for awaiting a reply within a positive deadline in milliseconds.
+    let asyncCallWithTimeout deadline target msg : Async<'Reply> =
         if deadline <= 0 then
             invalidArg "deadline" "Reply deadline must be positive"
 
         async {
             let! result =
-                callCoreAsync (Some deadline) System.Threading.CancellationToken.None target msg
+                asyncCallCore (Some deadline) System.Threading.CancellationToken.None target msg
 
             return replyOrRaise result
         }
@@ -644,7 +648,8 @@ module Actor =
                 pending.Add(target.Lifetime.Observe(fun exit -> pending.Settle(Choice1Of2(StopResult.Completed exit))))
                 target.Lifetime.RequestStop()))
 
-    let stopAsync cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
+    /// Async bridge for shutdown observation; cleanupDeadline is a positive number of milliseconds.
+    let asyncStop cleanupDeadline target : Async<StopResult> = stop cleanupDeadline target
 
     /// Enable supervision (stub on non-BEAM).
     ///
@@ -693,7 +698,8 @@ module Actor =
 
         callCore (Some deadline) token target msg
 
-    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> = callResult deadline token target msg
+    /// Async bridge for a bounded request with explicit outcomes; deadline is positive milliseconds.
+    let asyncCallResult deadline token target msg : Async<CallResult<'Reply>> = callResult deadline token target msg
 
     let private replyOrRaise =
         function
@@ -710,7 +716,8 @@ module Actor =
                 return replyOrRaise result
             })
 
-    let callAsync target msg : Async<'Reply> = call target msg
+    /// Async bridge for awaiting a reply without a reply deadline.
+    let asyncCall target msg : Async<'Reply> = call target msg
 
     /// Await a reply within a positive deadline; raises on timeout, target termination, or cancellation.
     let callWithTimeout deadline target msg : ActorOp<'Reply> =
@@ -725,12 +732,32 @@ module Actor =
                 return replyOrRaise result
             })
 
-    let callAsyncWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
+    /// Async bridge for awaiting a reply within a positive deadline in milliseconds.
+    let asyncCallWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
 
     /// Receive next message (free function, for backwards compatibility).
     let receive<'Msg> (inbox: Actor<'Msg>) : Async<'Msg> = inbox.Receive()
 
 #endif
+
+    // decision: deprecated aliases preserve published entry points while F# Async bridges use the async prefix
+    /// Use asyncStop to request shutdown and observe exit from an Async host.
+    [<System.Obsolete("Use Actor.asyncStop instead.")>]
+    let stopAsync cleanupDeadline target : Async<StopResult> = asyncStop cleanupDeadline target
+
+    /// Use asyncCallResult for a bounded request with explicit outcomes from an Async host.
+    [<System.Obsolete("Use Actor.asyncCallResult instead.")>]
+    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
+        asyncCallResult deadline token target msg
+
+    /// Use asyncCall to await a reply from an Async host.
+    [<System.Obsolete("Use Actor.asyncCall instead.")>]
+    let callAsync target msg : Async<'Reply> = asyncCall target msg
+
+    /// Use asyncCallWithTimeout to await a reply within a positive deadline from an Async host.
+    [<System.Obsolete("Use Actor.asyncCallWithTimeout instead.")>]
+    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
+        asyncCallWithTimeout deadline target msg
 
     // ============================================================================
     // Supervision
