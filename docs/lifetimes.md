@@ -1,0 +1,125 @@
+# Lifetimes
+
+Use `Lifetimes` when shutdown must observe actor-expression cleanup and owned
+children, or when callers need to inspect a terminal outcome more than once.
+Use ordinary `Actor.spawn` when its existing shutdown behavior is sufficient.
+
+The module ships in the **Fable.Actor** package and shares the `actor { }` builder.
+There is no extra package, builder or custom keyword. It is experimental and new
+in PR #77; the published 5.0.0-rc.14 package does not yet contain it.
+
+## Start and message a worker
+
+```fsharp
+open Fable.Actor
+open Fable.Actor.Types
+
+let startWorker () : CooperativeActor<string> =
+    Lifetimes.spawn (fun owner ->
+        let rec loop () = actor {
+            let! message = (Lifetimes.reference owner).Receive()
+            printfn "%s" message
+            return! loop ()
+        }
+        actor {
+            try
+                return! loop ()
+            finally
+                printfn "Worker cleanup finished"
+        })
+
+let sendWork owner text = Actor.send (Lifetimes.reference owner) text
+```
+
+`CooperativeActor<Message>` is a lifetime-control capability. Share
+`Lifetimes.reference owner` for messaging and retain the capability for shutdown.
+On BEAM, observation is scoped to the creating process; keep that process alive
+while it owns the capability.
+
+Use `use`/`use!` or `try`/`finally` in the actor expression to install cleanup.
+Cancellation wakes receives, reaches request waits and sequential Async operations,
+and stops the body at cooperative boundaries. Actor-expression finalizers run
+once with ambient cancellation shielded. Ordinary error handlers do not intercept
+owned cancellation; cleanup failures remain observable.
+
+## Stop and inspect the result
+
+```fsharp
+let closeWorker owner = actor {
+    let! result = Lifetimes.stop 2000 owner
+    match result with
+    | StopResult.Completed exit ->
+        match exit with
+        | ActorExit.Normal -> printfn "Worker finished normally"
+        | ActorExit.Cancelled -> printfn "Worker cancelled and cleaned up"
+        | ActorExit.Failed error -> printfn "Worker failed: %s" error.Message
+        Lifetimes.release owner |> ignore
+    | StopResult.TimedOut ->
+        printfn "Cleanup is still unobserved; retain the capability to retry"
+}
+```
+
+The deadline must be positive milliseconds. Stop requests cancellation and waits
+for the body and all registered cooperative descendants to exit. `TimedOut`
+means completion is unobserved; it never requests native kill. A later stop can
+complete. Repeated stop returns the retained terminal result until release.
+
+A body that has already finished normally or failed keeps that outcome. Body
+failure takes precedence over descendant failures; otherwise the first observed
+descendant failure becomes the owner's terminal failure. Handling a child's
+failure notification does not erase that retained defect.
+
+## Own children
+
+Create owned children with `Lifetimes.spawnLinked`, using the lifetime capability
+rather than its message reference:
+
+```fsharp
+let attachWorker (parent: CooperativeActor<string>) =
+    let child: CooperativeActor<string> =
+        Lifetimes.spawnLinked parent (fun child -> actor {
+            try
+                let! text = (Lifetimes.reference child).Receive()
+                printfn "%s" text
+            finally
+                printfn "Child cleanup finished"
+        })
+    Lifetimes.releaseWhenExited child
+    Lifetimes.reference child
+```
+
+Ownership is registered before the child starts. Parent completion cancels and
+awaits owned children recursively, including when the parent finishes normally.
+A parent whose terminal result is published rejects new children without running
+their bodies. Use an object inbox and the [supervision](supervision.md) notification
+pattern if the parent also handles child failures.
+
+This example relinquishes separate child observation because the parent owns
+shutdown. `releaseWhenExited` keeps the child owned until its actual exit.
+
+## Release observation
+
+On BEAM, a private controller retains the terminal outcome. After inspecting it,
+`Lifetimes.release owner` returns `Released` at completion or `Running` while
+cleanup remains owned. A `Running` result leaves observation available.
+`releaseWhenExited` relinquishes future observation while keeping running work
+owned until exit. Do not reuse a relinquished capability.
+
+Creator death cancels native work and reclaims observation state after cleanup.
+Managed runtimes reclaim unreachable metadata through garbage collection.
+Ordinary actors allocate no cooperative controller.
+
+## What completion covers
+
+Completion covers the actor expression and registered cooperative children.
+Opaque synchronous calls, independent services, raw processes and arbitrary
+parallel work need their own resource-settlement acknowledgement. They can outlive
+a stop deadline. A reply timeout does not undo the target's work.
+
+On BEAM, calling `Actor.kill` or `Actor.stop` through the message reference skips
+graceful cleanup. Plain nested `async { }` resource scopes also depend on the
+runtime: Fable 5.20.1 has separate BEAM Async finalizer/disposal defects. Put
+resource scopes in `actor { }`; see [Platform notes](platforms.md) for the boundary.
+
+For implementation and regression details, see
+[Maintainer notes](maintainers/lifetimes.md).
