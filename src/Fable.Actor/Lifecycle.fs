@@ -7,7 +7,7 @@ open System.Threading
 open Fable.Actor.Types
 
 // decision: delegates synchronization, cancellation registration, and delay settlement to Fable's fixed runtime
-// assumption: the compiler and runtime include https://github.com/fable-compiler/Fable/pull/5035, https://github.com/fable-compiler/Fable/pull/5036, https://github.com/fable-compiler/Fable/pull/5037, and https://github.com/fable-compiler/Fable/pull/5038
+// assumption: Fable compiler and runtime 5.20.1 or later include https://github.com/fable-compiler/Fable/pull/5035, https://github.com/fable-compiler/Fable/pull/5036, https://github.com/fable-compiler/Fable/pull/5037, and https://github.com/fable-compiler/Fable/pull/5038
 // Pending settlement and ActorLifetime ownership remain library responsibilities.
 module internal Lifetime =
     let newGate () = obj ()
