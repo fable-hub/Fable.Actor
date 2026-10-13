@@ -1,11 +1,19 @@
 ---
-last_commit_released: 26741d18ef4e2cbe0b05b4362c6bd659a956018b
+last_commit_released: 7d056df3a0ceb62db2ce3bb87d6daf6bbabce4d0
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.17 - 2026-10-13
+
+### 🚀 Features
+
+* Unify actor construction and command execution (#82) ([0775458](https://github.com/fable-hub/Fable.Actor/commit/0775458920a5eeaf64538c1a903410535611b1b0))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/26741d18ef4e2cbe0b05b4362c6bd659a956018b..7d056df3a0ceb62db2ce3bb87d6daf6bbabce4d0)</small></strong>
 
 ## 5.0.0-rc.16 - 2026-10-12
 
