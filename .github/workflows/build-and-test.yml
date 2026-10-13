@@ -56,6 +56,9 @@ jobs:
       - name: Run BEAM tests
         run: just test-beam
 
+      - name: Test packed command surface
+        run: just test-command-package
+
       - name: Build BEAM library and Timeflies example
         run: just build-timeflies
 

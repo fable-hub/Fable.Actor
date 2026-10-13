@@ -32,11 +32,11 @@ let private idleAndRepeated () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Lifetimes.reference owner).Receive()
+                        let! _ = owner.Receive()
                         return ()
                     finally
                         Actor.cast cleaned Signal
@@ -57,7 +57,7 @@ let private timeoutAndRetry () =
         let started, cleaned, released = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -84,20 +84,23 @@ let private normalAndOwnedCleanup () =
             barrier (), barrier (), barrier (), barrier ()
 
         let parent: CooperativeActor<unit> =
-            Lifetimes.spawn (fun parent ->
+            Actor.spawnCooperative (fun parent ->
                 actor {
                     try
                         let _child: CooperativeActor<unit> =
-                            Lifetimes.spawnLinked parent (fun _ ->
-                                actor {
-                                    try
-                                        Actor.cast started Signal
-                                        do! noncooperative released
-                                    finally
-                                        Actor.cast cleaned Signal
-                                })
+                            Actor.spawnLinked (
+                                parent.Owner,
+                                (fun _ ->
+                                    actor {
+                                        try
+                                            Actor.cast started Signal
+                                            do! noncooperative released
+                                        finally
+                                            Actor.cast cleaned Signal
+                                    })
+                            )
 
-                        let! _ = (Lifetimes.reference parent).Receive()
+                        let! _ = parent.Receive()
                         return ()
                     finally
                         Actor.cast finalized Signal
@@ -123,11 +126,11 @@ let private cleanupDefect () =
         let original = System.Exception "cooperative cleanup defect"
 
         let owner: CooperativeActor<int> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Lifetimes.reference owner).Receive()
+                        let! _ = owner.Receive()
                         return ()
                     finally
                         raise original
@@ -148,7 +151,7 @@ let private sleepAdapter () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -262,7 +265,7 @@ let private cancelledAcquisition () =
         let started, released, disposed = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     use! _resource = acquire started released disposed
                     return ()
@@ -284,7 +287,7 @@ let private busyLoop () =
         let started, cleaned = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -307,12 +310,15 @@ let private requestCancellation () =
         let started, cleaned = barrier (), barrier ()
 
         let service: Actor<unit * ReplyChannel<int>> =
-            Actor.start () (fun () (_, _) ->
-                Actor.cast started Signal
-                Continue())
+            Actor.spawn (
+                (),
+                (fun () (_, _) ->
+                    Actor.cast started Signal
+                    Continue())
+            )
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         let! _ = Actor.callResult 100000 CancellationToken.None service ()
@@ -335,7 +341,7 @@ let private normalCleanup () =
         let finalized, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         return ()
@@ -360,12 +366,15 @@ let private requestVariants () =
             let started, cleaned = barrier (), barrier ()
 
             let service: Actor<unit * ReplyChannel<int>> =
-                Actor.start () (fun () (_, _) ->
-                    Actor.cast started Signal
-                    Continue())
+                Actor.spawn (
+                    (),
+                    (fun () (_, _) ->
+                        Actor.cast started Signal
+                        Continue())
+                )
 
             let owner: CooperativeActor<int> =
-                Lifetimes.spawn (fun owner ->
+                Actor.spawnCooperative (fun owner ->
                     actor {
                         try
                             match kind with
@@ -397,7 +406,7 @@ let private retainedFailure () =
         let original = System.Exception "original cooperative body defect"
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         raise original
@@ -426,23 +435,26 @@ let private descendantDefect () =
         let childDefect = System.Exception "descendant cleanup defect"
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     try
                         let child: CooperativeActor<int> =
-                            Lifetimes.spawnLinked owner (fun child ->
-                                actor {
-                                    try
-                                        Actor.cast started Signal
-                                        let! _ = (Lifetimes.reference child).Receive()
-                                        return ()
-                                    finally
-                                        Actor.cast cleaned Signal
-                                        raise childDefect
-                                })
+                            Actor.spawnLinked (
+                                owner.Owner,
+                                (fun child ->
+                                    actor {
+                                        try
+                                            Actor.cast started Signal
+                                            let! _ = child.Receive()
+                                            return ()
+                                        finally
+                                            Actor.cast cleaned Signal
+                                            raise childDefect
+                                    })
+                            )
 
                         Lifetimes.releaseWhenExited child
-                        let! _ = (Lifetimes.reference owner).Receive()
+                        let! _ = owner.Receive()
                         raise original
                     finally
                         Actor.cast exited Signal
@@ -473,28 +485,34 @@ let private transitiveOwnership () =
         let started, released, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     let child: CooperativeActor<int> =
-                        Lifetimes.spawnLinked owner (fun child ->
-                            actor {
-                                let leaf: CooperativeActor<int> =
-                                    Lifetimes.spawnLinked child (fun _ ->
-                                        actor {
-                                            try
-                                                Actor.cast started Signal
-                                                do! noncooperative released
-                                            finally
-                                                Actor.cast cleaned Signal
-                                        })
+                        Actor.spawnLinked (
+                            owner.Owner,
+                            (fun child ->
+                                actor {
+                                    let leaf: CooperativeActor<int> =
+                                        Actor.spawnLinked (
+                                            child.Owner,
+                                            (fun _ ->
+                                                actor {
+                                                    try
+                                                        Actor.cast started Signal
+                                                        do! noncooperative released
+                                                    finally
+                                                        Actor.cast cleaned Signal
+                                                })
+                                        )
 
-                                Lifetimes.releaseWhenExited leaf
-                                let! _ = (Lifetimes.reference child).Receive()
-                                return ()
-                            })
+                                    Lifetimes.releaseWhenExited leaf
+                                    let! _ = child.Receive()
+                                    return ()
+                                })
+                        )
 
                     Lifetimes.releaseWhenExited child
-                    let! _ = (Lifetimes.reference owner).Receive()
+                    let! _ = owner.Receive()
                     return ()
                 })
 
@@ -516,7 +534,7 @@ let private transitiveOwnership () =
 let private invalidDeadline () =
     actor {
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun owner -> actor { let! _ = (Lifetimes.reference owner).Receive() in return () })
+            Actor.spawnCooperative (fun owner -> actor { let! _ = owner.Receive() in return () })
 
         for ms in [ 0; -1 ] do
             let mutable rejected = false
@@ -537,7 +555,10 @@ let private invalidDeadline () =
 let private terminalAttachment () =
     actor {
         let entered = barrier ()
-        let owner: CooperativeActor<unit> = Lifetimes.spawn (fun _ -> actor { return () })
+
+        let owner: CooperativeActor<unit> =
+            Actor.spawnCooperative (fun _ -> actor { return () })
+
         let! stopped = Lifetimes.stop deadline owner
         // The body can race an immediate cancellation; either result is terminal.
         assertThat (completed stopped) isTrue
@@ -545,7 +566,7 @@ let private terminalAttachment () =
 
         try
             let child: CooperativeActor<unit> =
-                Lifetimes.spawnLinked owner (fun _ -> actor { Actor.cast entered Signal })
+                Actor.spawnLinked (owner, (fun _ -> actor { Actor.cast entered Signal }))
 
             Lifetimes.releaseWhenExited child
         with _ ->
@@ -578,7 +599,7 @@ let private retention () =
         let started, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     Actor.cast started Signal
                     do! noncooperative released
@@ -619,11 +640,11 @@ let private creatorDeath () =
             Actor.spawn (fun creator ->
                 actor {
                     let owner: CooperativeActor<int> =
-                        Lifetimes.spawn (fun owner ->
+                        Actor.spawnCooperative (fun owner ->
                             actor {
                                 try
                                     Actor.cast started Signal
-                                    let! _ = (Lifetimes.reference owner).Receive()
+                                    let! _ = owner.Receive()
                                     return ()
                                 finally
                                     Actor.cast cleaned Signal
@@ -653,11 +674,11 @@ let private shieldedCleanup () =
             barrier (), barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<int> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     try
                         Actor.cast started Signal
-                        let! _ = (Lifetimes.reference owner).Receive()
+                        let! _ = owner.Receive()
                         return ()
                     finally
                         Actor.cast finalizing Signal
@@ -696,7 +717,7 @@ let private lateCleanupDefect () =
         let original = System.Exception "late acquisition cleanup defect"
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     use! _resource =
                         acquireWith started released (fun () ->
@@ -733,11 +754,11 @@ let private cancellationRace () =
             let entered = barrier ()
 
             let owner: CooperativeActor<unit> =
-                Lifetimes.spawn (fun owner ->
+                Actor.spawnCooperative (fun owner ->
                     actor {
                         try
                             Actor.cast entered Signal
-                            let! _ = (Lifetimes.reference owner).Receive()
+                            let! _ = owner.Receive()
                             return ()
                         finally
                             Actor.cast cleaned Signal
@@ -769,7 +790,7 @@ let private failedText () =
         let exited = barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         failwith "body text defect"
@@ -795,7 +816,7 @@ let private abandonedObserver () =
         let started, released = barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     Actor.cast started Signal
                     do! noncooperative released
@@ -844,7 +865,7 @@ let private deferredRelease () =
         let started, released, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun _ ->
+            Actor.spawnCooperative (fun _ ->
                 actor {
                     try
                         Actor.cast started Signal
@@ -877,15 +898,18 @@ let private preconstructedRequest () =
         let admitted, cleaned = barrier (), barrier ()
 
         let service: Actor<unit * ReplyChannel<int>> =
-            Actor.start () (fun () (_, _) ->
-                Actor.cast admitted Signal
-                Continue())
+            Actor.spawn (
+                (),
+                (fun () (_, _) ->
+                    Actor.cast admitted Signal
+                    Continue())
+            )
         // invariant: construction precedes both owners; each execution must resolve its own ambient token
         let operation = Actor.callResult 2000 CancellationToken.None service ()
 
         for n in 1..2 do
             let owner: CooperativeActor<unit> =
-                Lifetimes.spawn (fun _ ->
+                Actor.spawnCooperative (fun _ ->
                     actor {
                         try
                             let! _ = operation
@@ -913,12 +937,12 @@ let private cancellationHandler () =
         let started, handled, cleaned = barrier (), barrier (), barrier ()
 
         let owner: CooperativeActor<unit> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     try
                         try
                             Actor.cast started Signal
-                            let! _ = (Lifetimes.reference owner).Receive()
+                            let! _ = owner.Receive()
                             return ()
                         with error ->
                             Actor.cast handled Signal
@@ -947,24 +971,27 @@ let private earlierDescendantFailure () =
         let original = System.Exception "earlier descendant cleanup defect"
 
         let owner: CooperativeActor<obj> =
-            Lifetimes.spawn (fun owner ->
+            Actor.spawnCooperative (fun owner ->
                 actor {
                     let child: CooperativeActor<unit> =
-                        Lifetimes.spawnLinked owner (fun child ->
-                            actor {
-                                try
-                                    Actor.cast started Signal
-                                    let! _ = (Lifetimes.reference child).Receive()
-                                    return ()
-                                finally
-                                    raise original
-                            })
+                        Actor.spawnLinked (
+                            owner.Owner,
+                            (fun child ->
+                                actor {
+                                    try
+                                        Actor.cast started Signal
+                                        let! _ = child.Receive()
+                                        return ()
+                                    finally
+                                        raise original
+                                })
+                        )
 
                     Actor.cast handles (Some(Some child))
 
                     let rec loop () =
                         actor {
-                            let! message = (Lifetimes.reference owner).Receive()
+                            let! message = owner.Receive()
 
                             match Actor.tryAsChildExited message with
                             | Some exited ->

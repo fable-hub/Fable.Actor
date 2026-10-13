@@ -1,6 +1,8 @@
 # Documentation
 
 Read the guides in order, or jump to the feature you need.
+[One actor API](actors.md) explains the factory overloads, message references,
+inboxes and migration from the earlier surface.
 
 | Step | Guide | What you learn |
 | --- | --- | --- |
@@ -8,6 +10,9 @@ Read the guides in order, or jump to the feature you need.
 | 2 | [Messaging](messaging.md) | Keep state, request replies and handle deadlines |
 | 3 | [Supervision](supervision.md) | Own linked children and choose recovery policies |
 | 4 | [Lifetimes](lifetimes.md) | Opt into cooperative shutdown and retained outcomes |
+
+For state handlers that return finite work descriptions, see
+[Optional actor commands](commands.md).
 
 The library is experimental.
 

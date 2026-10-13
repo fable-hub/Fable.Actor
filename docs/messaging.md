@@ -10,9 +10,8 @@ counter, then adds explicit timeout and cancellation outcomes.
 
 ## State and replies
 
-`Actor.start` runs a stateful handler. Return `Continue nextState` to keep going,
-`Stop` to finish, or `StopAbnormal error` to fail. A `ReplyChannel<Value>` lets a
-handler reply to a request.
+`Actor.spawn(initialState, update)` runs a stateful handler. A simple handler
+returns the new state directly. A `ReplyChannel<Value>` lets it reply to a request.
 
 ```fsharp
 open Fable.Actor
@@ -21,12 +20,12 @@ open Fable.Actor.Types
 type CounterMessage = Increment | GetCount
 
 let counter: Actor<CounterMessage * ReplyChannel<int>> =
-    Actor.start 0 (fun count (message, reply) ->
+    Actor.spawn(0, (fun count (message, reply) ->
         match message with
-        | Increment -> Continue(count + 1)
+        | Increment -> count + 1
         | GetCount ->
             reply.Reply count
-            Continue count)
+            count))
 
 let readCounter () = actor {
     Actor.cast counter Increment
@@ -35,6 +34,11 @@ let readCounter () = actor {
     printfn "Count: %d" count
 }
 ```
+
+A handler can also return `Next<State>` when it decides termination explicitly:
+`Continue nextState` keeps going, `Stop` finishes normally, and `StopAbnormal error`
+fails. Pure state handlers can instead configure a `shouldStop` predicate on the
+factory. [One actor API](actors.md) explains overload selection.
 
 `Actor.cast` sends to a request-capable actor with a reply channel that ignores
 replies. `Actor.call` waits for a reply without a deadline;

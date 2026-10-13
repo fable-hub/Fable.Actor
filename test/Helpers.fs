@@ -90,10 +90,11 @@ module Helpers =
 #endif
 
     let mailboxLength (target: Actor<'Msg>) =
+        let mailbox: MailboxProcessor<'Msg> = unbox target.Pid
 #if FABLE_COMPILER
-        mailboxQueueLength target.Mb
+        mailboxQueueLength mailbox
 #else
-        target.Mb.CurrentQueueLength
+        mailbox.CurrentQueueLength
 #endif
 
     /// Observe workflow and descendant exit without requesting shutdown.
@@ -129,9 +130,12 @@ module Helpers =
     /// decision: reports observations through messages because BEAM actors copy captured mutable values
     /// invariant: Some replaces the cell and None replies with its latest value
     let reporter initial =
-        Actor.start initial (fun state (msg, rc) ->
-            match msg with
-            | Some v -> Continue v
-            | None ->
-                rc.Reply state
-                Continue state)
+        Actor.spawn (
+            initial,
+            (fun state (msg, rc) ->
+                match msg with
+                | Some v -> Continue v
+                | None ->
+                    rc.Reply state
+                    Continue state)
+        )

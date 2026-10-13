@@ -152,14 +152,17 @@ let private timeoutTests =
                     toAsync (
                         actor {
                             let worker =
-                                Actor.start () (fun _state (msg, rc) ->
-                                    match msg with
-                                    | Fast ->
-                                        rc.Reply "fast"
-                                        Continue()
-                                    | Slow ->
-                                        rc.Reply "slow"
-                                        Continue())
+                                Actor.spawn (
+                                    (),
+                                    (fun _state (msg, rc) ->
+                                        match msg with
+                                        | Fast ->
+                                            rc.Reply "fast"
+                                            Continue()
+                                        | Slow ->
+                                            rc.Reply "slow"
+                                            Continue())
+                                )
 
                             let! result = Actor.callWithTimeout 1000 worker Fast
                             assertThat result (isEqualTo "fast")
@@ -211,18 +214,21 @@ let private asyncCallTests =
                 "a reply can be let!-bound from inside an async { } block",
                 // Regression target for Fable.Reactive's mapActor: on BEAM `call` is CPS and cannot
                 // be let!-bound in async { }, but asyncCall can. The caller (this process) and the
-                // server (a distinct process from Actor.start) must not deadlock.
+                // server (a distinct process from Actor.spawn) must not deadlock.
                 fun _ ->
                     toAsync (
                         actor {
                             let server =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Increment -> Continue(count + 1)
-                                    | Decrement -> Continue(count - 1)
-                                    | GetCount ->
-                                        rc.Reply count
-                                        Continue count)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Increment -> Continue(count + 1)
+                                        | Decrement -> Continue(count - 1)
+                                        | GetCount ->
+                                            rc.Reply count
+                                            Continue count)
+                                )
 
                             Actor.cast server Increment
                             Actor.cast server Increment

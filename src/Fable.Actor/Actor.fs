@@ -3,7 +3,7 @@
 // BEAM: actor { } is a CPS computation (no-op wrapper, BEAM processes block natively).
 // Non-BEAM: actor { } delegates to async { }, Actor wraps MailboxProcessor.
 //
-// Actor<'Msg> provides MailboxProcessor-compatible API:
+// Actor<'Msg> is the typed message reference; ActorInbox<'Msg> adds Receive inside a body:
 //   inbox.Receive() — get next message (inside body)
 //   actor.Post(msg)  — send a message (from outside)
 //
@@ -34,15 +34,30 @@ open Fable.Actor.Platform
 
 type ActorOp<'T> = { Run: ('T -> unit) -> unit }
 
-type Actor<'Msg> = {
-    Pid: Pid<'Msg>
-} with
+/// A typed message reference shared by every actor authoring form.
+///
+/// decision: message references carry their send encoding so private host envelopes stay outside application protocols
+/// invariant: reference adaptation preserves the native process identity
+/// tradeoff: one encoder call per send lets private host protocols share the same typed message-reference API
+[<AllowNullLiteral>]
+type Actor<'Msg> internal (pid: Pid<obj>, encode: 'Msg -> obj) =
+    member _.Pid: Pid<'Msg> = unbox (box pid)
+    member _.Post(message: 'Msg) = sendMsg pid (encode message)
+    member internal _.MapInput(mapping: 'Input -> 'Msg) : Actor<'Input> = Actor(pid, mapping >> encode)
+
+/// The message reference and receive operation supplied to a running actor body.
+///
+/// decision: the inbox composes a message reference so native handles remain process-portable and callers cannot receive private host messages
+[<AllowNullLiteral>]
+type ActorInbox<'Msg> internal (pid: Pid<obj>) =
+    let reference = Actor<'Msg>(pid, box)
+    member _.Reference = reference
+    member _.Pid = reference.Pid
+    member _.Post(message: 'Msg) = reference.Post message
 
     member _.Receive() : ActorOp<'Msg> = {
         Run = fun cont -> ExecutionNative.receive (fun raw -> cont (unbox<'Msg> raw))
     }
-
-    member this.Post(msg: 'Msg) = sendMsg this.Pid msg
 
 type ActorBuilder() =
     member _.Bind(op: ActorOp<'T>, f: 'T -> ActorOp<'U>) : ActorOp<'U> = {
@@ -142,12 +157,50 @@ type ActorBuilder() =
 
 type ActorOp<'T> = Async<'T>
 
-type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime) =
-    member _.Mb = mb
-    member _.Cts = cts
+/// A typed message reference shared by every actor authoring form.
+///
+/// decision: typed delivery avoids per-message .NET boxing while adapted references wrap private host envelopes
+/// invariant: posting after cancellation or workflow exit is a no-op
+/// invariant: adaptation preserves mailbox identity, lifetime and raw system-message delivery
+/// tradeoff: typed delivery callbacks preserve a common reference contract without boxing ordinary value messages
+[<AllowNullLiteral>]
+type Actor<'Msg>
+    internal
+    (pid: obj, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime, deliver: 'Msg -> unit, deliverSystem: obj -> unit) =
+    member internal _.Cts = cts
     member internal _.Lifetime = lifetime
-    member _.Pid: obj = box mb
+    member _.Pid = pid
 
+    member _.Post(message: 'Msg) =
+        lifetime.Post(fun () -> deliver message)
+
+    member internal _.PostSystem(message: obj) =
+        lifetime.Post(fun () -> deliverSystem message)
+
+    member internal _.MapInput(mapping: 'Input -> 'Msg) : Actor<'Input> =
+        Actor(pid, cts, lifetime, mapping >> deliver, deliverSystem)
+
+/// The message reference and receive operation supplied to a running actor body.
+///
+/// decision: the inbox composes a message reference so native handles remain process-portable and callers cannot receive private host messages
+[<AllowNullLiteral>]
+type ActorInbox<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime) =
+    // decision: delivery callbacks capture only the mailbox so a shared reference does not retain its body inbox
+    let reference =
+        let deliveryMailbox = mb
+
+        Actor<'Msg>(
+            box mb,
+            cts,
+            lifetime,
+            (fun message -> deliveryMailbox.Post message),
+            (fun message -> deliveryMailbox.Post(unbox message))
+        )
+
+    member _.Reference = reference
+    member _.Pid = reference.Pid
+    member internal _.Lifetime = lifetime
+    member _.Post(message: 'Msg) = reference.Post message
     // TODO(upstream): this check pairs with spawnOwned's synthetic cancellation wakeup.
     // Retire both only after published JS/Python Receive wakes and cancels correctly;
     // https://github.com/fable-compiler/Fable/pull/5038 documents this remaining mailbox gap.
@@ -179,10 +232,6 @@ type Actor<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.Can
             ))
 #endif
 
-    /// Queue a message while the actor accepts work.
-    ///
-    /// invariant: posting after cancellation or workflow exit is a no-op
-    member _.Post(msg: 'Msg) = lifetime.Post(fun () -> mb.Post msg)
 
 type ActorBuilder() =
     // decision: delays nonresource portable binders so cancellation rejects user code while acquired resources can first install Using
@@ -274,7 +323,7 @@ type ActorBuilder() =
 /// decision: retains the body and strategy in an immutable value so restart state is portable across targets
 type SupervisedChild<'ParentMsg, 'Msg> = {
     Actor: Actor<'Msg>
-    Body: Actor<'Msg> -> ActorOp<unit>
+    Body: ActorInbox<'Msg> -> ActorOp<unit>
     Strategy: Strategy
 }
 
@@ -297,23 +346,23 @@ module ActorCE =
 // ============================================================================
 
 [<RequireQualifiedAccess>]
-module Actor =
+module internal ActorRuntime =
 
 #if FABLE_COMPILER_BEAM
 
     /// Spawn an actor. Body receives inbox (self-reference) for Receive/Post.
-    let spawn (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
+    let spawn (body: ActorInbox<'Msg> -> ActorOp<unit>) : ActorInbox<'Msg> =
         let rawPid =
             Erlang.spawn (fun () ->
-                let me: Actor<'Msg> = { Pid = Erlang.self () }
+                let me = ActorInbox<'Msg>(Erlang.self<obj>())
                 (body me).Run(fun () -> ()))
 
-        { Pid = rawPid }
+        ActorInbox<'Msg>(unbox (box rawPid))
 
     /// Spawn with external cancellation. BEAM cancellation requests native kill; it cannot unwind arbitrary ActorOp work.
     ///
     /// decision: releases the external registration in a watcher because kill cannot execute actor finalizers
-    let spawnWithToken (token: System.Threading.CancellationToken) (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
+    let spawnWithToken (token: System.Threading.CancellationToken) (body: ActorInbox<'Msg> -> ActorOp<unit>) : ActorInbox<'Msg> =
         let child = spawn body
         let registration = token.Register(fun () -> killProcess child.Pid)
 
@@ -331,16 +380,16 @@ module Actor =
     /// Spawn a linked child actor (parent gets EXIT signal on crash).
     ///
     /// decision: links to the supplied parent and monitors normal parent death so ownership does not depend on the caller
-    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> ActorOp<unit>) : Actor<'Msg> =
+    let spawnLinked (parent: Actor<'ParentMsg>) (body: ActorInbox<'Msg> -> ActorOp<unit>) : ActorInbox<'Msg> =
         let rawPid =
             spawnOwnedProcess parent.Pid (fun () ->
-                let me: Actor<'Msg> = { Pid = Erlang.self () }
+                let me = ActorInbox<'Msg>(Erlang.self<obj>())
                 (body me).Run(fun () -> ()))
 
-        { Pid = rawPid }
+        ActorInbox<'Msg>(unbox (box rawPid))
 
     /// Get own pid (only valid inside actor body).
-    let self<'Msg> () : Actor<'Msg> = { Pid = Erlang.self () }
+    let self<'Msg> () : ActorInbox<'Msg> = ActorInbox(Erlang.self<obj>())
 
     /// Kill an actor and its linked children.
     let kill (actor: Actor<'Msg>) : unit = killProcess actor.Pid
@@ -430,12 +479,12 @@ module Actor =
                         then
                             CallResult.Cancelled
                         else
-                            sendMsg
-                                target.Pid
-                                (msg,
-                                 {
-                                     Reply = fun value -> sendAliasReply alias value
-                                 })
+                            target.Post(
+                                msg,
+                                {
+                                    Reply = fun value -> sendAliasReply alias value
+                                }
+                            )
 
                             wait ()
                     finally
@@ -541,14 +590,14 @@ module Actor =
 #else
 
     // decision: runs the body explicitly to observe all three Async exit continuations on every emulated target
-    let private spawnOwned token attach (body: Actor<'Msg> -> Async<unit>) =
+    let private spawnOwned token attach (body: ActorInbox<'Msg> -> Async<unit>) =
         let cts = new System.Threading.CancellationTokenSource()
         let lifetime = ActorLifetime cts
 
         let mb =
             new MailboxProcessor<'Msg>((fun _ -> async { return () }), cancellationToken = cts.Token)
 
-        let inbox = Actor(mb, cts, lifetime)
+        let inbox = ActorInbox(mb, cts, lifetime)
         // TODO(upstream): mailbox wakeup is not fixed by https://github.com/fable-compiler/Fable/pull/5038.
         // Retire this synthetic post and Receive's cancellation check only when a published
         // JS/Python mailbox wakes idle Receive on cancellation without delivering user work.
@@ -595,16 +644,16 @@ module Actor =
     /// Spawn cooperative work with an external lifetime token. The registration is released on exit.
     ///
     /// decision: passes the owned token to the workflow so cancellation reaches receives and cooperative Async work
-    let spawnWithToken (cancellationToken: System.Threading.CancellationToken) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
+    let spawnWithToken (cancellationToken: System.Threading.CancellationToken) (body: ActorInbox<'Msg> -> Async<unit>) : ActorInbox<'Msg> =
         spawnOwned cancellationToken ignore body
 
     /// Spawn an actor with an owned cooperative lifetime.
-    let spawn (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
+    let spawn (body: ActorInbox<'Msg> -> Async<unit>) : ActorInbox<'Msg> =
         spawnWithToken System.Threading.CancellationToken.None body
 
     // invariant: normal and cancelled child exits do not emit ChildExited on emulated targets
     // decision: abnormal child exits notify rather than cancel the parent so existing emulated supervision remains compatible
-    let private spawnLinkedCore retainChildFailure (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> =
+    let private spawnLinkedCore retainChildFailure (parent: Actor<'ParentMsg>) (body: ActorInbox<'Msg> -> Async<unit>) : ActorInbox<'Msg> =
         spawnOwned
             System.Threading.CancellationToken.None
             (fun child ->
@@ -614,13 +663,14 @@ module Actor =
                     match exit with
                     | ActorExit.Failed ex ->
                         // invariant: shutdown rejects notifications before converting them to the parent's application message type
-                        parent.Lifetime.Post(fun () -> parent.Mb.Post(unbox { Pid = child.Pid; Reason = box ex }))
+                        parent.PostSystem(box { Pid = child.Pid; Reason = box ex })
                     | _ -> ())
                 |> ignore)
             body
 
     /// Own a child until exit. Parent exit cancels the child; abnormal child exit notifies the parent.
-    let spawnLinked (parent: Actor<'ParentMsg>) (body: Actor<'Msg> -> Async<unit>) : Actor<'Msg> = spawnLinkedCore false parent body
+    let spawnLinked (parent: Actor<'ParentMsg>) (body: ActorInbox<'Msg> -> Async<unit>) : ActorInbox<'Msg> =
+        spawnLinkedCore false parent body
 
     // decision: cooperative ownership retains earlier descendant defects without changing legacy supervision's handled-failure semantics
     let internal spawnCooperativeLinked parent body = spawnLinkedCore true parent body
@@ -736,28 +786,9 @@ module Actor =
     let asyncCallWithTimeout deadline target msg : Async<'Reply> = callWithTimeout deadline target msg
 
     /// Receive next message (free function, for backwards compatibility).
-    let receive<'Msg> (inbox: Actor<'Msg>) : Async<'Msg> = inbox.Receive()
+    let receive<'Msg> (inbox: ActorInbox<'Msg>) : Async<'Msg> = inbox.Receive()
 
 #endif
-
-    // decision: deprecated aliases preserve published entry points while F# Async bridges use the async prefix
-    /// Use asyncStop to request shutdown and observe exit from an Async host.
-    [<System.Obsolete("Use Actor.asyncStop instead.")>]
-    let stopAsync cleanupDeadline target : Async<StopResult> = asyncStop cleanupDeadline target
-
-    /// Use asyncCallResult for a bounded request with explicit outcomes from an Async host.
-    [<System.Obsolete("Use Actor.asyncCallResult instead.")>]
-    let callResultAsync deadline token target msg : Async<CallResult<'Reply>> =
-        asyncCallResult deadline token target msg
-
-    /// Use asyncCall to await a reply from an Async host.
-    [<System.Obsolete("Use Actor.asyncCall instead.")>]
-    let callAsync target msg : Async<'Reply> = asyncCall target msg
-
-    /// Use asyncCallWithTimeout to await a reply within a positive deadline from an Async host.
-    [<System.Obsolete("Use Actor.asyncCallWithTimeout instead.")>]
-    let callAsyncWithTimeout deadline target msg : Async<'Reply> =
-        asyncCallWithTimeout deadline target msg
 
     // ============================================================================
     // Supervision
@@ -776,12 +807,12 @@ module Actor =
     let spawnSupervised
         (parent: Actor<'ParentMsg>)
         (strategy: Strategy)
-        (body: Actor<'Msg> -> ActorOp<unit>)
+        (body: ActorInbox<'Msg> -> ActorOp<unit>)
         : SupervisedChild<'ParentMsg, 'Msg> =
         let child = spawnLinked parent body
 
         {
-            Actor = child
+            Actor = child.Reference
             Body = body
             Strategy = strategy
         }
@@ -809,7 +840,11 @@ module Actor =
         | Directive.Escalate -> raise ex
         | Directive.Restart ->
             let newChild = spawnLinked parent supervised.Body
-            ChildExitResult.Restarted { supervised with Actor = newChild }
+
+            ChildExitResult.Restarted {
+                supervised with
+                    Actor = newChild.Reference
+            }
 
 #else
 
@@ -823,12 +858,12 @@ module Actor =
     let spawnSupervised
         (parent: Actor<'ParentMsg>)
         (strategy: Strategy)
-        (body: Actor<'Msg> -> Async<unit>)
+        (body: ActorInbox<'Msg> -> Async<unit>)
         : SupervisedChild<'ParentMsg, 'Msg> =
         let child = spawnLinked parent body
 
         {
-            Actor = child
+            Actor = child.Reference
             Body = body
             Strategy = strategy
         }
@@ -856,7 +891,11 @@ module Actor =
         | Directive.Escalate -> raise ex
         | Directive.Restart ->
             let newChild = spawnLinked parent supervised.Body
-            ChildExitResult.Restarted { supervised with Actor = newChild }
+
+            ChildExitResult.Restarted {
+                supervised with
+                    Actor = newChild.Reference
+            }
 
 #endif
 
@@ -871,34 +910,23 @@ module Actor =
     let cast (actor: Actor<'Msg * ReplyChannel<'Reply>>) (msg: 'Msg) : unit =
         actor.Post((msg, { Reply = fun _ -> () }))
 
-    /// Start a stateful actor with a message handler.
-    ///
-    /// decision: threads state through a single receive loop so updates remain private and serialized
-    /// invariant: the next message is not handled until the current handler returns its Next value
-    let start (initialState: 'State) (handler: 'State -> 'Msg -> Next<'State>) : Actor<'Msg> =
-        let body (inbox: Actor<'Msg>) =
-            let rec loop state =
-                actor {
-                    let! msg = inbox.Receive()
+    // decision: one state loop serves ordinary and cooperative factories without changing handler termination semantics
+    // invariant: the next message is not handled until the current handler returns its Next value
+    let stateBody (initialState: 'State) (handler: 'State -> 'Msg -> Next<'State>) (receive: unit -> ActorOp<'Msg>) =
+        let rec loop state =
+            actor {
+                let! msg = receive ()
 
-                    match handler state msg with
-                    | Continue newState -> return! loop newState
-                    | Stop -> ()
-                    | StopAbnormal ex -> raise ex
-                }
+                match handler state msg with
+                | Continue newState -> return! loop newState
+                | Stop -> return ()
+                | StopAbnormal ex -> return raise ex
+            }
 
-            loop initialState
+        loop initialState
 
-#if FABLE_COMPILER_BEAM
-        let rawPid =
-            Erlang.spawn (fun () ->
-                let me: Actor<'Msg> = { Pid = Erlang.self () }
-                (body me).Run(fun () -> ()))
-
-        { Pid = rawPid }
-#else
-        spawn body
-#endif
+    let start initialState handler =
+        spawn (fun inbox -> stateBody initialState handler inbox.Receive)
 
 #if FABLE_COMPILER_BEAM
 

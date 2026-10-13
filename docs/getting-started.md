@@ -40,7 +40,8 @@ Actor.send greeter "World"
 ```
 
 `Actor.spawn` starts an actor and returns its message handle. Its body receives
-that handle as `inbox`. `actor { }` describes the body: `let!` awaits an operation,
+an `ActorInbox<Message>` with a receive operation; the shared message reference
+does not expose `Receive`. `actor { }` describes the body: `let!` awaits an operation,
 and `return!` continues the loop. `Actor.send` posts a message without waiting
 for it to be processed. `inbox.Post` is the equivalent instance method.
 
@@ -62,9 +63,15 @@ The deadline is in milliseconds and must be positive. On BEAM, ordinary stop
 uses force kill and skips finalizers. Choose [Lifetimes](lifetimes.md) when you
 need cooperative cleanup across targets.
 
+## Choose an authoring form
+
+The overloads on `Actor.spawn` accept an explicit loop, a state-only update, or
+an update returning `nextState, command`. All return the same typed message
+reference. See [One actor API](actors.md) and [Commands](commands.md).
+
 ## Keep state inside the actor
 
-Pass state through the loop or use `Actor.start`, introduced in the next guide.
+Pass state through the loop or use `Actor.spawn(initialState, update)`, introduced in the next guide.
 Share message handles, not mutable variables: BEAM processes have separate heaps,
 so captured mutable values do not form shared state between actors.
 

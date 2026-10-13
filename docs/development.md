@@ -51,8 +51,8 @@ trailing animation.
 ## Package
 
 `just pack` creates the single Fable.Actor NuGet package using the version in
-[CHANGELOG.md](../CHANGELOG.md). It includes the ordinary Actor and optional
-Lifetimes modules, their assembly and the Fable source payload.
+[CHANGELOG.md](../CHANGELOG.md). It includes the unified Actor factories, command descriptions and lifetime
+capabilities, their assembly and the Fable source payload.
 
 Controller design and runtime regressions are documented in
 [Maintainer notes](maintainers/lifetimes.md).

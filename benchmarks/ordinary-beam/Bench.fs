@@ -39,7 +39,7 @@ let rec private asyncBinds remaining sum =
             return! asyncBinds (remaining - 1) (sum + value)
     }
 
-let rec private receives (inbox: Actor<int>) remaining sum =
+let rec private receives (inbox: ActorInbox<int>) remaining sum =
     actor {
         if remaining = 0 then
             return sum
@@ -92,7 +92,7 @@ let private sample name iterations =
 
     match name with
     | "bind" ->
-        Actor.spawn (fun (_: Actor<unit>) ->
+        Actor.spawn (fun (_: ActorInbox<unit>) ->
             actor {
                 let before = counters ()
                 let! sum = binds iterations 0L
@@ -100,7 +100,7 @@ let private sample name iterations =
             })
         |> ignore
     | "async" ->
-        Actor.spawn (fun (_: Actor<unit>) ->
+        Actor.spawn (fun (_: ActorInbox<unit>) ->
             actor {
                 let before = counters ()
                 let! sum = asyncBinds iterations 0L
@@ -111,7 +111,7 @@ let private sample name iterations =
         Actor.spawn (fun inbox ->
             actor {
                 for _ in 1..iterations do
-                    Actor.send inbox 1
+                    Actor.send inbox.Reference 1
 
                 let before = counters ()
                 let! sum = receives inbox iterations 0L
@@ -119,7 +119,7 @@ let private sample name iterations =
             })
         |> ignore
     | "finally" ->
-        Actor.spawn (fun (_: Actor<unit>) ->
+        Actor.spawn (fun (_: ActorInbox<unit>) ->
             actor {
                 let mutable cleaned = 0
                 let before = counters ()
@@ -142,12 +142,15 @@ let private sample name iterations =
             })
         |> ignore
     | "call" ->
-        Actor.spawn (fun (_: Actor<unit>) ->
+        Actor.spawn (fun (_: ActorInbox<unit>) ->
             actor {
                 let service: Actor<unit * ReplyChannel<int>> =
-                    Actor.start 0 (fun state (_, reply) ->
-                        reply.Reply 1
-                        Continue(state + 1))
+                    Actor.spawn (
+                        0,
+                        (fun state (_, reply) ->
+                            reply.Reply 1
+                            Continue(state + 1))
+                    )
 
                 let before = counters ()
                 let! sum = calls service iterations 0L
@@ -158,7 +161,7 @@ let private sample name iterations =
     | _ -> invalidArg "name" "Unknown workload"
 
     let mutable result = Unchecked.defaultof<Measurement>
-    (recipient.Receive()).Run(fun value -> result <- value)
+    (Actor.receive<Measurement>()).Run(fun value -> result <- value)
     result
 
 [<EntryPoint>]

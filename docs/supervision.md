@@ -14,7 +14,7 @@ For shutdown that waits for owned cleanup, see [Lifetimes](lifetimes.md).
 
 ## Linked children
 
-`Actor.spawnLinked parent body` starts a child linked to a parent. Children stop
+`Actor.spawnLinked(parent, body)` starts a child linked to a parent. Children stop
 when their parent exits, including normal completion. On BEAM, call
 `Actor.trapExits ()` inside the parent to receive abnormal child exits as messages.
 Managed targets already report child failures as messages.
@@ -38,7 +38,7 @@ let startSupervisor () : Actor<obj> =
         Actor.trapExits ()
 
         let child =
-            Actor.spawnSupervised inbox
+            Actor.spawnSupervised inbox.Reference
                 (OneForOne(fun _ -> Directive.Restart))
                 (fun childInbox ->
                     let rec work () = actor {
@@ -52,7 +52,7 @@ let startSupervisor () : Actor<obj> =
             let! message = inbox.Receive()
             match Actor.tryAsChildExited message with
             | Some exited ->
-                match Actor.handleChildExit inbox current exited with
+                match Actor.handleChildExit inbox.Reference current exited with
                 | ChildExitResult.Restarted replacement ->
                     return! loop replacement
                 | ChildExitResult.Stopped -> return ()
