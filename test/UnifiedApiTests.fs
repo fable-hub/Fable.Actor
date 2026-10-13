@@ -160,6 +160,26 @@ let private asyncAndMessageConstructors () =
         return ()
     }
 
+let private adaptedParentFailures () =
+    actor {
+        let failures = journal ()
+        let parent, handles = supervised failures (fun state _ -> state, Command.none)
+        let! created = take 1 handles
+        let owner = List.head created
+        // invariant: runtime failures bypass a command reference's application-message envelope
+        let child: Actor<unit> =
+            Actor.spawnLinked (owner, fun _ -> actor { return failwith "linked-reference-defect" })
+
+        let! errors = take 1 failures
+        assertThat ((List.head errors).Contains "linked-reference-defect") isTrue
+        do! observeExit child
+        do! observeExit owner
+        do! observeExit parent
+        let! _ = Actor.stop deadline failures
+        let! _ = Actor.stop deadline handles
+        return ()
+    }
+
 let private closeBeforeUpdate () =
     actor {
         let events = journal ()
@@ -382,6 +402,7 @@ let tests =
             case "cooperative state and command factories share typed messaging" allStateFactories
             case "linked factory overloads retain ordinary and cooperative ownership" linkedStateFactories
             case "Async factories are inert and immediate commands return typed messages" asyncAndMessageConstructors
+            case "linked failures bypass adapted application-message references" adaptedParentFailures
             case "termination uses accepted state and skips the matching update" closeBeforeUpdate
             case "cooperative command stop awaits worker finalizers and retains exit" (fun () -> cooperativeCleanup false)
             case "cooperative command timeout leaves workers owned until actual exit" (fun () -> cooperativeCleanup true)

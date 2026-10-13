@@ -9,6 +9,7 @@ open Fable.Actor.Types
 ///
 /// decision: erased static factories put all authoring forms under Actor without introducing a runtime factory object
 /// decision: overloads select execution from the handler type while each factory returns the same typed message-reference contract
+/// decision: absent termination predicates stay absent so the default path evaluates only the update
 /// invariant: ordinary factories keep native kill semantics; cooperative factories register every cooperative descendant
 [<Erase>]
 type Actor =
@@ -24,13 +25,10 @@ type Actor =
 
     /// Spawn a pure state handler. The optional predicate terminates before the matching update runs.
     static member spawn(initial: 'State, update: 'State -> 'Message -> 'State, ?shouldStop: 'State -> 'Message -> bool) : Actor<'Message> =
-        let terminate = defaultArg shouldStop (fun _ _ -> false)
-
         (ActorRuntime.start initial (fun state message ->
-            if terminate state message then
-                Stop
-            else
-                Continue(update state message)))
+            match shouldStop with
+            | Some terminate when terminate state message -> Stop
+            | _ -> Continue(update state message)))
             .Reference
 
     /// Spawn a serialized update returning its new state and inert finite commands.
@@ -38,7 +36,7 @@ type Actor =
     static member spawn
         (initial: 'State, update: 'State -> 'Message -> 'State * Command<'Message>, ?shouldStop: 'State -> 'Message -> bool)
         : Actor<'Message> =
-        CommandRuntime.spawn initial update (defaultArg shouldStop (fun _ _ -> false))
+        CommandRuntime.spawn initial update shouldStop
 
     /// Spawn an ordinary linked receive loop; its failures follow the parent's supervision protocol.
     static member spawnLinked(parent: Actor<'Parent>, body: ActorInbox<'Message> -> ActorOp<unit>) : Actor<'Message> =
@@ -52,13 +50,10 @@ type Actor =
     static member spawnLinked
         (parent: Actor<'Parent>, initial: 'State, update: 'State -> 'Message -> 'State, ?shouldStop: 'State -> 'Message -> bool)
         : Actor<'Message> =
-        let terminate = defaultArg shouldStop (fun _ _ -> false)
-
         let handler state message =
-            if terminate state message then
-                Stop
-            else
-                Continue(update state message)
+            match shouldStop with
+            | Some terminate when terminate state message -> Stop
+            | _ -> Continue(update state message)
 
         (ActorRuntime.spawnLinked parent (fun inbox -> ActorRuntime.stateBody initial handler inbox.Receive)).Reference
 
@@ -70,7 +65,7 @@ type Actor =
             update: 'State -> 'Message -> 'State * Command<'Message>,
             ?shouldStop: 'State -> 'Message -> bool
         ) : Actor<'Message> =
-        CommandRuntime.spawnLinked parent initial update (defaultArg shouldStop (fun _ _ -> false))
+        CommandRuntime.spawnLinked parent initial update shouldStop
 
     /// Spawn a cooperative receive loop. Its inbox exposes Owner for child attachment.
     static member spawnCooperative(body: CooperativeInbox<'Message> -> ActorOp<unit>) : CooperativeActor<'Message> =
@@ -84,13 +79,10 @@ type Actor =
     static member spawnCooperative
         (initial: 'State, update: 'State -> 'Message -> 'State, ?shouldStop: 'State -> 'Message -> bool)
         : CooperativeActor<'Message> =
-        let terminate = defaultArg shouldStop (fun _ _ -> false)
-
         let handler state message =
-            if terminate state message then
-                Stop
-            else
-                Continue(update state message)
+            match shouldStop with
+            | Some terminate when terminate state message -> Stop
+            | _ -> Continue(update state message)
 
         LifetimesRuntime.spawn (fun inbox -> ActorRuntime.stateBody initial handler inbox.Receive)
 
@@ -98,7 +90,7 @@ type Actor =
     static member spawnCooperative
         (initial: 'State, update: 'State -> 'Message -> 'State * Command<'Message>, ?shouldStop: 'State -> 'Message -> bool)
         : CooperativeActor<'Message> =
-        CommandRuntime.spawnCooperative initial update (defaultArg shouldStop (fun _ _ -> false))
+        CommandRuntime.spawnCooperative initial update shouldStop
 
     /// Attach a cooperative receive loop before its body starts; parent completion observes its cleanup.
     static member spawnLinked
@@ -116,13 +108,10 @@ type Actor =
     static member spawnLinked
         (parent: CooperativeActor<'Parent>, initial: 'State, update: 'State -> 'Message -> 'State, ?shouldStop: 'State -> 'Message -> bool)
         : CooperativeActor<'Message> =
-        let terminate = defaultArg shouldStop (fun _ _ -> false)
-
         let handler state message =
-            if terminate state message then
-                Stop
-            else
-                Continue(update state message)
+            match shouldStop with
+            | Some terminate when terminate state message -> Stop
+            | _ -> Continue(update state message)
 
         LifetimesRuntime.spawnLinked parent (fun inbox -> ActorRuntime.stateBody initial handler inbox.Receive)
 
@@ -134,7 +123,7 @@ type Actor =
             update: 'State -> 'Message -> 'State * Command<'Message>,
             ?shouldStop: 'State -> 'Message -> bool
         ) : CooperativeActor<'Message> =
-        CommandRuntime.spawnCooperativeLinked parent initial update (defaultArg shouldStop (fun _ _ -> false))
+        CommandRuntime.spawnCooperativeLinked parent initial update shouldStop
 
     /// Queue a typed application message without acknowledging processing.
     static member send (target: Actor<'Message>) (message: 'Message) = ActorRuntime.send target message

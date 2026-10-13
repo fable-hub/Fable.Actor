@@ -90,10 +90,11 @@ module Helpers =
 #endif
 
     let mailboxLength (target: Actor<'Msg>) =
+        let mailbox: MailboxProcessor<'Msg> = unbox target.Pid
 #if FABLE_COMPILER
-        mailboxQueueLength target.Mb
+        mailboxQueueLength mailbox
 #else
-        target.Mb.CurrentQueueLength
+        mailbox.CurrentQueueLength
 #endif
 
     /// Observe workflow and descendant exit without requesting shutdown.

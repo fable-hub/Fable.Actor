@@ -159,29 +159,44 @@ type ActorOp<'T> = Async<'T>
 
 /// A typed message reference shared by every actor authoring form.
 ///
-/// decision: send encoding adapts private host envelopes while preserving mailbox identity and lifetime observation
+/// decision: typed delivery avoids per-message .NET boxing while adapted references wrap private host envelopes
 /// invariant: posting after cancellation or workflow exit is a no-op
-/// tradeoff: boxed mailbox storage and one encoder call per send keep host envelopes and system notifications private
+/// invariant: adaptation preserves mailbox identity, lifetime and raw system-message delivery
+/// tradeoff: typed delivery callbacks preserve a common reference contract without boxing ordinary value messages
 [<AllowNullLiteral>]
 type Actor<'Msg>
-    internal (mb: MailboxProcessor<obj>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime, encode: 'Msg -> obj) =
-    member internal _.Mb = mb
+    internal
+    (pid: obj, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime, deliver: 'Msg -> unit, deliverSystem: obj -> unit) =
     member internal _.Cts = cts
     member internal _.Lifetime = lifetime
-    member _.Pid: obj = box mb
+    member _.Pid = pid
 
     member _.Post(message: 'Msg) =
-        lifetime.Post(fun () -> mb.Post(encode message))
+        lifetime.Post(fun () -> deliver message)
+
+    member internal _.PostSystem(message: obj) =
+        lifetime.Post(fun () -> deliverSystem message)
 
     member internal _.MapInput(mapping: 'Input -> 'Msg) : Actor<'Input> =
-        Actor(mb, cts, lifetime, mapping >> encode)
+        Actor(pid, cts, lifetime, mapping >> deliver, deliverSystem)
 
 /// The message reference and receive operation supplied to a running actor body.
 ///
 /// decision: the inbox composes a message reference so native handles remain process-portable and callers cannot receive private host messages
 [<AllowNullLiteral>]
-type ActorInbox<'Msg> internal (mb: MailboxProcessor<obj>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime) =
-    let reference = Actor<'Msg>(mb, cts, lifetime, box)
+type ActorInbox<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threading.CancellationTokenSource, lifetime: ActorLifetime) =
+    // decision: delivery callbacks capture only the mailbox so a shared reference does not retain its body inbox
+    let reference =
+        let deliveryMailbox = mb
+
+        Actor<'Msg>(
+            box mb,
+            cts,
+            lifetime,
+            (fun message -> deliveryMailbox.Post message),
+            (fun message -> deliveryMailbox.Post(unbox message))
+        )
+
     member _.Reference = reference
     member _.Pid = reference.Pid
     member internal _.Lifetime = lifetime
@@ -199,7 +214,7 @@ type ActorInbox<'Msg> internal (mb: MailboxProcessor<obj>, cts: System.Threading
                     if cts.IsCancellationRequested then
                         cancelled (System.OperationCanceledException())
                     else
-                        ok (unbox msg)),
+                        ok msg),
                  error,
                  cancelled))
 #else
@@ -210,7 +225,7 @@ type ActorInbox<'Msg> internal (mb: MailboxProcessor<obj>, cts: System.Threading
                     if cts.IsCancellationRequested then
                         cancelled (System.OperationCanceledException())
                     else
-                        ok (unbox msg)),
+                        ok msg),
                 error,
                 cancelled,
                 cts.Token
@@ -580,7 +595,7 @@ module internal ActorRuntime =
         let lifetime = ActorLifetime cts
 
         let mb =
-            new MailboxProcessor<obj>((fun _ -> async { return () }), cancellationToken = cts.Token)
+            new MailboxProcessor<'Msg>((fun _ -> async { return () }), cancellationToken = cts.Token)
 
         let inbox = ActorInbox(mb, cts, lifetime)
         // TODO(upstream): mailbox wakeup is not fixed by https://github.com/fable-compiler/Fable/pull/5038.
@@ -588,7 +603,7 @@ module internal ActorRuntime =
         // JS/Python mailbox wakes idle Receive on cancellation without delivering user work.
         // decision: wakes the portable mailbox on cancellation because JS/Python Receive does not register a wakeup
         // invariant: the synthetic wakeup never reaches user code because the workflow token is already cancelled
-        lifetime.AddResource(Lifetime.cancellation cts.Token (fun () -> mb.Post null))
+        lifetime.AddResource(Lifetime.cancellation cts.Token (fun () -> mb.Post Unchecked.defaultof<'Msg>))
 #if !FABLE_COMPILER
         lifetime.AddResource(mb :> System.IDisposable)
 #endif
@@ -648,7 +663,7 @@ module internal ActorRuntime =
                     match exit with
                     | ActorExit.Failed ex ->
                         // invariant: shutdown rejects notifications before converting them to the parent's application message type
-                        parent.Lifetime.Post(fun () -> parent.Mb.Post(box { Pid = child.Pid; Reason = box ex }))
+                        parent.PostSystem(box { Pid = child.Pid; Reason = box ex })
                     | _ -> ())
                 |> ignore)
             body
