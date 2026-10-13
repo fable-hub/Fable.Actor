@@ -17,6 +17,7 @@
     <Compile Include="CommandObservations.fs" />
     <Compile Include="CommandTestSupport.fs" />
     <Compile Include="CommandTests.fs" />
+    <Compile Include="UnifiedApiTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>

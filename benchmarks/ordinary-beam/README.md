@@ -18,7 +18,13 @@ and OTP 27.3.4.9 / Rebar 3.27.0 installed through mise.
 
 Copy **this same harness** into `build/OrdinaryOverhead` in each checkout. This
 keeps the workload identical even when a baseline predates these benchmark files.
-Run these commands in each checkout:
+The current harness uses the unified Actor API, including `ActorInbox` and
+state-handler spawn overloads. Select baselines with that same API; older releases
+need a separately validated compatible harness. The comparison script rejects
+different generated workloads, so do not bypass that check to compare different
+source migrations. The recorded release comparison below uses its original harness.
+
+Run these commands in each compatible checkout:
 
 ```sh
 mkdir -p build/OrdinaryOverhead

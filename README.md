@@ -25,6 +25,7 @@ Actor.send greeter "World"
 Start with [Getting started](docs/getting-started.md), then follow the
 [documentation guide](docs/README.md):
 
+- [One actor API](docs/actors.md): choose a loop, state handler or command handler.
 - [Messaging](docs/messaging.md): state, requests, deadlines and timers.
 - [Supervision](docs/supervision.md): linked children and restart policies.
 - [Commands](docs/commands.md): optional state handlers with linked finite work.

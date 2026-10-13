@@ -1,8 +1,8 @@
-namespace Fable.Actor.Commands
+namespace Fable.Actor
 
 open Fable.Actor
 
-// decision: keep work descriptions in an optional namespace so loop and state-only actors need no command concepts
+// decision: command descriptions are optional factory inputs so explicit loops and state-only actors need no command execution policy
 
 // decision: retain factories in records so command mapping constructs data and preserves callback arity across targets
 type internal Operation<'Message> = { Create: unit -> ActorOp<'Message> }
@@ -10,14 +10,6 @@ type internal Operation<'Message> = { Create: unit -> ActorOp<'Message> }
 /// An inert description of finite actor-owned work that produces application messages.
 /// Constructing, mapping, or batching commands does not run their operation factories.
 type Command<'Message> = internal Command of Operation<'Message> list
-
-/// The next private state and work, or normal owner completion.
-[<RequireQualifiedAccess>]
-type Next<'State, 'Message> =
-    /// Accept the new state before starting the described work.
-    | Continue of 'State * Command<'Message>
-    /// Finish the owner; linked workers follow the runtime's shutdown contract.
-    | Stop
 
 /// Optional finite-work descriptions; actor loops and state-only handlers do not require them.
 [<RequireQualifiedAccess>]
@@ -28,17 +20,28 @@ module Command =
     /// Describe an operation whose value becomes one application message.
     /// Both the factory and the completion function execute inside a linked worker.
     /// Defects fail the owner; Result and CallResult values remain ordinary message data.
-    let ofOperation (operation: unit -> ActorOp<'Value>) (completed: 'Value -> 'Message) : Command<'Message> =
+    let ofActor (operation: 'Argument -> ActorOp<'Value>) (argument: 'Argument) (completed: 'Value -> 'Message) : Command<'Message> =
         Command [
             {
                 Create =
                     fun () ->
                         actor {
-                            let! value = operation ()
+                            let! value = operation argument
                             return completed value
                         }
             }
         ]
+
+    /// Describe an Async workflow that runs through the actor builder inside its owned worker.
+    /// Defects follow actor supervision; Result values remain application data.
+    ///
+    /// decision: bridges Async through the shared builder so cooperative cancellation follows the executing worker's lifetime
+    let ofAsync (operation: 'Argument -> Async<'Value>) (argument: 'Argument) (completed: 'Value -> 'Message) : Command<'Message> =
+        ofActor (fun input -> actor { let! value = operation input in return value }) argument completed
+
+    /// Queue a message after the current update, through the same owned-work execution path.
+    let ofMsg (message: 'Message) : Command<'Message> =
+        ofActor (fun () -> actor { return message }) () id
 
     /// Group commands that may run concurrently. Completion order is unspecified.
     /// This does not add throttling, replacement, or a limit on active work.

@@ -15,23 +15,26 @@ type BarrierMsg =
     | Read
 
 let barrier () =
-    Actor.start (0, []) (fun (count, waiters) (msg, rc) ->
-        match msg with
-        | Signal ->
-            let count = count + 1
+    Actor.spawn (
+        (0, []),
+        (fun (count, waiters) (msg, rc) ->
+            match msg with
+            | Signal ->
+                let count = count + 1
 
-            let ready, pending =
-                waiters
-                |> List.partition (fun (n, _) -> n <= count)
+                let ready, pending =
+                    waiters
+                    |> List.partition (fun (n, _) -> n <= count)
 
-            for _, reply in ready do
-                reply.Reply count
+                for _, reply in ready do
+                    reply.Reply count
 
-            Continue(count, pending)
-        | Await n when n > count -> Continue(count, (n, rc) :: waiters)
-        | _ ->
-            rc.Reply count
-            Continue(count, waiters))
+                Continue(count, pending)
+            | Await n when n > count -> Continue(count, (n, rc) :: waiters)
+            | _ ->
+                rc.Reply count
+                Continue(count, waiters))
+    )
 
 let await n events =
     actor { let! _ = Actor.callWithTimeout 2000 events (Await n) in return () }
@@ -64,12 +67,15 @@ let linkExitCase cancelChild =
                     Actor.trapExits ()
 
                     let child =
-                        Actor.spawnLinked inbox (fun child ->
-                            actor {
-                                Actor.cast started Signal
-                                let! _ = child.Receive()
-                                return ()
-                            })
+                        Actor.spawnLinked (
+                            inbox.Reference,
+                            (fun child ->
+                                actor {
+                                    Actor.cast started Signal
+                                    let! _ = child.Receive()
+                                    return ()
+                                })
+                        )
 
                     Actor.cast handle (Some(Some child))
 
@@ -132,7 +138,7 @@ let private handledFailureIsNotRetained () =
             Actor.spawn (fun parent ->
                 actor {
                     let _child: Actor<unit> =
-                        Actor.spawnLinked parent (fun _ -> actor { failwith "handled legacy child failure" })
+                        Actor.spawnLinked (parent.Reference, (fun _ -> actor { failwith "handled legacy child failure" }))
 
                     let! message = parent.Receive()
                     assertThat (Actor.tryAsChildExited message).IsSome isTrue
@@ -232,7 +238,7 @@ let tests =
                                                     member _.Dispose() = Actor.cast cleaned Signal
                                             }
 
-                                            Actor.kill inbox
+                                            Actor.kill inbox.Reference
                                             ok resource)
 
                                     use _resource = resource
@@ -266,7 +272,10 @@ let tests =
                                         try
                                             for _ in 1..100 do
                                                 let child: Actor<int> =
-                                                    Actor.spawnLinked inbox (fun child -> actor { let! _ = child.Receive() in return () })
+                                                    Actor.spawnLinked (
+                                                        inbox.Reference,
+                                                        (fun child -> actor { let! _ = child.Receive() in return () })
+                                                    )
 
                                                 assertThat (isLinked child) isTrue
                                                 Actor.kill child
@@ -312,7 +321,7 @@ let tests =
 
                             let child: Actor<int> =
                                 try
-                                    Actor.spawnLinked parent (fun inbox -> actor { let! _ = inbox.Receive() in return () })
+                                    Actor.spawnLinked (parent, (fun inbox -> actor { let! _ = inbox.Receive() in return () }))
                                 finally
                                     restorePriority priority
 
@@ -395,12 +404,15 @@ let tests =
                             let started = barrier ()
 
                             let worker: Actor<int> =
-                                Actor.spawnWithToken cts.Token (fun inbox ->
-                                    actor {
-                                        Actor.cast started Signal
-                                        let! _ = inbox.Receive()
-                                        return ()
-                                    })
+                                Actor.spawn (
+                                    (fun inbox ->
+                                        actor {
+                                            Actor.cast started Signal
+                                            let! _ = inbox.Receive()
+                                            return ()
+                                        }),
+                                    cancellationToken = cts.Token
+                                )
 
                             do! await 1 started
                             cts.Cancel()
@@ -464,15 +476,18 @@ let tests =
                                         Actor.trapExits ()
 
                                         let child =
-                                            Actor.spawnLinked inbox (fun child ->
-                                                actor {
-                                                    try
-                                                        Actor.cast started Signal
-                                                        let! _ = child.Receive()
-                                                        return ()
-                                                    finally
-                                                        Actor.cast cleaned Signal
-                                                })
+                                            Actor.spawnLinked (
+                                                inbox.Reference,
+                                                (fun child ->
+                                                    actor {
+                                                        try
+                                                            Actor.cast started Signal
+                                                            let! _ = child.Receive()
+                                                            return ()
+                                                        finally
+                                                            Actor.cast cleaned Signal
+                                                    })
+                                            )
 
                                         Actor.cast handle (Some(Some child))
                                         let! _ = inbox.Receive()
@@ -518,7 +533,7 @@ let tests =
                                     actor {
                                         Actor.trapExits ()
 
-                                        let body (child: Actor<string>) =
+                                        let body (child: ActorInbox<string>) =
                                             actor {
                                                 try
                                                     Actor.cast generations Signal
@@ -530,7 +545,9 @@ let tests =
                                                     Actor.cast cleaned Signal
                                             }
 
-                                        let first = Actor.spawnSupervised inbox (OneForOne(fun _ -> Directive.Restart)) body
+                                        let first =
+                                            Actor.spawnSupervised inbox.Reference (OneForOne(fun _ -> Directive.Restart)) body
+
                                         Actor.cast handle (Some(Some first.Actor))
                                         Actor.cast ready Signal
                                         let! msg = inbox.Receive()
@@ -538,7 +555,7 @@ let tests =
                                         match Actor.tryAsChildExited msg with
                                         | None -> failwith "Missing child exit"
                                         | Some exit ->
-                                            match Actor.handleChildExit inbox first exit with
+                                            match Actor.handleChildExit inbox.Reference first exit with
                                             | ChildExitResult.Stopped -> failwith "Missing replacement"
                                             | ChildExitResult.Restarted replacement ->
                                                 Actor.cast handle (Some(Some replacement.Actor))
@@ -621,7 +638,7 @@ let tests =
                                                     member _.Dispose() = Actor.cast cleaned Signal
                                             }
 
-                                            Actor.kill inbox
+                                            Actor.kill inbox.Reference
                                             resource
 
                                         failwith "Cancelled resource body ran"
@@ -651,7 +668,7 @@ let tests =
                                                     member _.Dispose() = failwith "acquisition cleanup failed"
                                             }
 
-                                            Actor.kill inbox
+                                            Actor.kill inbox.Reference
                                             resource
 
                                         return ()
@@ -752,9 +769,12 @@ let tests =
                             let called = reporter 0
 
                             let worker: Actor<int> =
-                                Actor.spawnWithToken cts.Token (fun _ ->
-                                    Actor.cast called (Some 1)
-                                    actor { return () })
+                                Actor.spawn (
+                                    (fun _ ->
+                                        Actor.cast called (Some 1)
+                                        actor { return () }),
+                                    cancellationToken = cts.Token
+                                )
 
                             let! stopped = Actor.stop 2000 worker
                             assertThat (completed stopped) isTrue
@@ -773,7 +793,7 @@ let tests =
                             use cts = new CancellationTokenSource()
 
                             let worker: Actor<int> =
-                                Actor.spawnWithToken cts.Token (fun _ -> actor { return () })
+                                Actor.spawn ((fun _ -> actor { return () }), cancellationToken = cts.Token)
 
                             let! stopped = Actor.stop 2000 worker
                             assertThat (completed stopped) isTrue

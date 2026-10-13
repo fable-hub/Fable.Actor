@@ -99,16 +99,16 @@ test-command-package:
     EOF
     export NUGET_PACKAGES="$command_package_workspace/cache"
     dotnet run --project "$command_package_workspace/consumer"
-    for command_check in COMMAND_MESSAGE_MISMATCH COMMAND_SEND_MISMATCH; do
+    for command_check in COMMAND_MESSAGE_MISMATCH COMMAND_SEND_MISMATCH ACTOR_REFERENCE_RECEIVE; do
         command_check_log="$command_package_workspace/$command_check.log"
         if dotnet build "$command_package_workspace/consumer" -p:DefineConstants="$command_check" > "$command_check_log" 2>&1; then
             cat "$command_check_log"
             echo "Expected command message-type rejection: $command_check" >&2
             exit 1
         fi
-        grep -q 'error FS0001' "$command_check_log" || { cat "$command_check_log"; exit 1; }
+        grep -Eq 'error FS(0001|0041|0039)' "$command_check_log" || { cat "$command_check_log"; exit 1; }
     done
-    echo 'Packed command compiler checks rejected both message-type mismatches.'
+    echo 'Packed actor compiler checks rejected message-type mismatches and receiving through a message reference.'
     {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang javascript --outDir "$command_package_workspace/output"
     echo '{"type":"module"}' > "$command_package_workspace/output/package.json"
     node "$command_package_workspace/output/Main.js"

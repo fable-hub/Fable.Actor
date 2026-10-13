@@ -13,7 +13,9 @@ Ordinary `Actor.spawn` is sufficient when its existing shutdown behavior meets
 your needs. For recovery after a worker crash, see [Supervision](supervision.md).
 
 `Fable.Actor.Lifetimes` is an F# module in the **Fable.Actor** NuGet package.
-Its actors use the shared `actor { }` computation expression.
+Construction lives on `Actor.spawnCooperative`; loop bodies use the shared
+`actor { }` computation expression. The body receives a `CooperativeInbox<Message>`
+with `Receive`, `Reference` and an `Owner` lifetime capability for child attachment.
 
 ## Start and message a worker
 
@@ -22,9 +24,9 @@ open Fable.Actor
 open Fable.Actor.Types
 
 let startWorker () : CooperativeActor<string> =
-    Lifetimes.spawn (fun owner ->
+    Actor.spawnCooperative (fun owner ->
         let rec loop () = actor {
-            let! message = (Lifetimes.reference owner).Receive()
+            let! message = owner.Receive()
             printfn "%s" message
             return! loop ()
         }
@@ -78,19 +80,19 @@ failure notification does not erase that retained defect.
 
 ## Own children
 
-Create owned children with `Lifetimes.spawnLinked`, using the lifetime capability
+Create owned children with `Actor.spawnLinked`, using the lifetime capability
 rather than its message reference:
 
 ```fsharp
 let attachWorker (parent: CooperativeActor<string>) =
     let child: CooperativeActor<string> =
-        Lifetimes.spawnLinked parent (fun child -> actor {
+        Actor.spawnLinked(parent, (fun child -> actor {
             try
-                let! text = (Lifetimes.reference child).Receive()
+                let! text = child.Receive()
                 printfn "%s" text
             finally
                 printfn "Child cleanup finished"
-        })
+        }))
     Lifetimes.releaseWhenExited child
     Lifetimes.reference child
 ```

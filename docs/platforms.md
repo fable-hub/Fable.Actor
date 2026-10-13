@@ -25,7 +25,7 @@ Host code using `async { }` can call the explicit Async bridges, such as
 do not change the target's shutdown contract. On BEAM, sequential Async executes
 in the calling process.
 
-`Actor.spawnWithToken token body` ties an ordinary actor to external cancellation.
+`Actor.spawn(body, cancellationToken = token)` ties an ordinary actor to external cancellation.
 On .NET, JavaScript and Python it requests cooperative cancellation; on BEAM it
 requests native kill. For native integration, `Actor.pid` exposes a target-specific
 handle rather than a portable application value.

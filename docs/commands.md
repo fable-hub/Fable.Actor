@@ -1,122 +1,121 @@
-# Optional actor commands
+# Actor-owned commands
 
-The experimental `Fable.Actor.Commands` namespace supplies a third authoring
-form alongside an explicit `Actor.spawn` loop and the state-only `Actor.start`
-handler. All three use the same actor runtime. Existing APIs keep their names,
-types, and behavior; an application need not reference command types.
+Use the command-handler overload of `Actor.spawn` when each message decides a
+new state and finite work. Explicit receive loops and state-only handlers use
+that same factory and share the same `Actor<Message>` message-reference type.
 
-## Quick start
+## State and work
+
+An update returns a tuple: **the new state, and work to start**. It does not wait
+for the work to finish. Completion messages go through the same serialized update.
 
 ```fsharp
-open System.Threading
 open Fable.Actor
 open Fable.Actor.Types
-open Fable.Actor.Commands
 
-type LabelState = Idle | Loaded of CallResult<string>
-type LabelMessage = Refresh | LabelLoaded of CallResult<string> | Close
+type LabelState = Idle | Loading | Loaded of Result<string, string>
+type LabelMessage = Refresh | LabelLoaded of Result<string, string> | Close
 
-let startLabel service =
+let startLabel (fetchLabel: unit -> Async<Result<string, string>>) =
     let update state message =
         match message with
-        | Refresh ->
-            let command =
-                Command.ofOperation
-                    (fun () -> Actor.callResult 2000 CancellationToken.None service ())
-                    LabelLoaded
-            Fable.Actor.Commands.Next.Continue(state, command)
-        | LabelLoaded result ->
-            Fable.Actor.Commands.Next.Continue(Loaded result, Command.none)
-        | Close -> Fable.Actor.Commands.Next.Stop
+        | Refresh -> Loading, Command.ofAsync fetchLabel () LabelLoaded
+        | LabelLoaded result -> Loaded result, Command.none
+        | Close -> state, Command.none
 
-    CommandActor.start Idle update
+    Actor.spawn(
+        Idle,
+        update,
+        shouldStop = (fun _ message -> match message with Close -> true | _ -> false))
 ```
 
-`CommandActor.send` accepts the application's message type. Its opaque handle
-keeps the private mailbox envelope and child-exit notifications outside that
-type. Use `CommandActor.startLinked` for a supervising `Actor<obj>`, and
-`CommandActor.stop` or `stopAsync` for bounded shutdown observation.
+Send with `Actor.send label Refresh`. The optional `shouldStop` predicate sees
+accepted state and the incoming message **before update**. A matching message
+finishes the owner normally without calling update or starting new work.
+External shutdown uses `Actor.stop` or `Actor.asyncStop`.
 
+## Command descriptions
 
-## Description and execution
+`Command<Message>` is an opaque, inert description of finite work. Constructing,
+mapping, and batching commands never runs their factories.
 
-`Command<Message>` is an opaque, inert description of finite work. It contains
-operation factories, not running tasks or actor handles.
-
-| Operation | Contract |
+| Constructor | Contract |
 | --- | --- |
 | `Command.none` | Start no new work; existing work continues |
-| `Command.ofOperation operation completed` | Run the factory in a linked worker and map its value to one owner message |
-| `Command.batch commands` | Start the described operations independently; completion order is unspecified |
-| `Command.map mapping command` | Map output messages inside their workers; constructing the mapped command remains inert |
+| `Command.ofAsync operation argument completed` | Run an Async workflow through the actor builder and map its value to one owner message |
+| `Command.ofActor operation argument completed` | Run an actor operation and map its value to one owner message |
+| `Command.ofMsg message` | Queue one message through the owned-work path after the current update |
+| `Command.batch commands` | Start independent operations; completion order is unspecified |
+| `Command.map mapping command` | Transform completion messages inside their workers; construction remains inert |
 
-The factory returns `ActorOp<Value>`. Domain errors in `Result` and transport
-outcomes in `CallResult` are data: the completion function chooses their
-application message. Commands neither catch defects as recoverable errors nor
-retry requests. Factory, operation, and completion-mapping defects fail the
-worker and then its owner through the existing linked failure path.
+Factories and completion functions run inside linked workers. Domain errors in
+`Result` and transport outcomes in `CallResult` remain data. Factory, operation,
+and mapping defects fail the worker and then its owner through the linked
+failure path. Commands do not automatically retry or turn defects into messages.
 
-`CommandActor.start initial update` starts one owner mailbox. Each synchronous
-update returns `Next.Continue(state, command)` or `Next.Stop`. The update
-finishes successfully before command execution; a defective update starts
-none of its returned work. Worker messages reenter the same serialized update
-loop. Several commands may be active at once, including commands from separate
-updates. The initial implementation supplies no admission or resource bound.
+A successful update finishes before any returned work starts. An update that
+fails starts none of its returned work. Multiple operations may be active at
+once, including operations from separate updates. There is no admission bound,
+keyed replacement, throttling, or stale-result rejection; those policies require
+an explicit application protocol.
 
-## Message and supervision boundaries
+`ofMsg` produces a new input message. It is not an inline call to update and does
+not guarantee ordering relative to other workers or independent senders.
 
-`CommandActor<Message>` is a typed handle for this optional host. Its private
-runtime mailbox holds application envelopes and child-exit notifications, so
-a notification cannot be mistaken for an application union case. This avoids
-requiring an application to accept `obj` messages. The handle is not a raw
-`Actor<Message>`; send through `CommandActor.send`. For response conversations,
-include a typed reply channel or callback in the application's message union.
+## One typed actor reference
 
-`CommandActor.startLinked parent initial update` attaches the owner to a
-supervising `Actor<obj>` through `Actor.spawnLinked`. The parent owns the
-restart policy. A restart produces a fresh owner and handle; the command layer
-does not implement stable addressing or automatically retry failed work.
+The host privately receives application envelopes and child-exit notifications.
+Its returned `Actor<Message>` reference wraps application messages automatically.
+Use the same `Actor.send`, `cast`, and request/reply APIs as for other actors.
+An `Actor<Message>` reference has no `Receive`; loop bodies receive an
+`ActorInbox<Message>` separately. Native `Actor.pid` interoperability bypasses
+the send adapter and must respect the host's private protocol.
 
-## Shutdown and cancellation
+For reply conversations, include a typed `ReplyChannel<Value>` in the message
+protocol. The standard tuple protocol, `Actor<Message * ReplyChannel<Value>>`,
+works with command handlers as well as state handlers and explicit loops.
 
-`CommandActor.stop` and `stopAsync` delegate to the existing actor operations.
-A positive deadline is a precondition. `TimedOut` limits observation and does
-not prove termination. Parent completion and external stop own linked workers
-through the runtime's existing ownership mechanism.
+`Actor.spawnLinked(parent, initialState, update)` attaches a command owner to an
+ordinary parent. The parent chooses the recovery policy. Restart creates a fresh
+owner/reference and does not automatically retry work or preserve addressing.
 
-| Host | Shutdown evidence |
-| --- | --- |
-| .NET, JavaScript, Python | Cooperative cancellation; observed owner exit includes owned-worker exit and actor-expression cleanup |
-| Native BEAM | Native process death; kill skips finalizers and owner death is not a descendant-cleanup acknowledgement |
+## Cooperative ownership
 
-No command-specific lifecycle runtime or cooperative BEAM capability is added.
-Arbitrary noncooperative host operations retain their runtime limitations.
-Native ownership watchers stop workers after normal owner completion; callers
-requiring a whole-tree acknowledgement still need stronger runtime support.
+Choose `Actor.spawnCooperative(initialState, update)` when shutdown must observe
+registered worker cleanup across all targets. It returns a
+`CooperativeActor<Message>` lifetime capability; share `Lifetimes.reference owner`
+for messaging and retain the capability for `Lifetimes.stop` and release.
 
-An operation may use an explicit cancellation token, as `Actor.callResult`
-does. Its cancelled outcome remains a message while the owner is alive.
-Cancelling a request does not recall a message delivered to an independent
-service. Owner shutdown ends its workers rather than delivering a cancellation
-message to an owner that is exiting.
+Every operation becomes a cooperative child registered before its factory runs.
+Normal owner completion and external stop cancel active workers and observe
+their body/finalizer exit recursively. Worker capabilities relinquish separate
+observation automatically; cleanup stays owned by the command owner. Defects
+remain retained terminal failures, even when stop races a child notification.
 
-Keyed cancellation, replacement, latest-result selection, backpressure,
-subscriptions, and a single-active-command policy are outside this layer.
-Correlate requests in the domain protocol where those policies are needed.
-Direct actor loops and state-only handlers remain the escape hatches.
+`Actor.spawnLinked(parentCapability, initialState, update)` creates a cooperative
+command owner within an existing cooperative tree. Passing an ordinary message
+reference selects ordinary ownership; lifetime policy is explicit at construction.
 
-## Evidence
+An ordinary command owner retains ordinary runtime semantics: .NET, JavaScript
+and Python observe owned cleanup; native BEAM stop confirms process death but
+skips finalizers and does not acknowledge descendant cleanup. A cooperative stop
+never force-kills on timeout. Keep a timed-out capability to observe actual exit
+later. See [Lifetimes](lifetimes.md) for release and retained-outcome rules.
 
-The shared `test/CommandTests.fs` catalog runs with the existing tests on .NET,
-JavaScript, Python, and BEAM. It covers inert construction, mapping and batches,
-success and domain errors, responsive concurrent work, request timeout,
-cancellation and service termination, linked defects, defective updates, normal
-owner completion, and external owner stop. Native worker death is observed
-separately; native finalizers are deliberately not claimed.
+A command completion message is an application outcome, not a whole-tree cleanup
+acknowledgement. Opaque synchronous operations, independent services, timers and
+other unregistered resources need their own settlement contract. Cancelling a
+request does not retract a message already delivered to an independent service.
+Recurring subscriptions are outside this finite-command API.
 
-`just test-command-package` packs the library and runs a fresh external consumer
-on .NET and JavaScript. The consumer restores into an independent package cache
-without a source-project reference; it tests mapped and batched completions,
-accepted state, and asynchronous host shutdown.
-Two negative builds also reject a command/update message mismatch and sending
-the wrong message type through a command-owner handle.
+## Validation
+
+The shared suite runs on .NET, JavaScript, Python and BEAM. It covers inert
+construction, mapping/batches, request outcomes, linked defects, accepted-state
+ordering, termination predicates, shared typed references, cooperative finalizers,
+timeout/retry, retained failures and transitive ownership.
+
+`just test-command-package` restores a packed artifact into an independent cache
+and checks an external .NET/JavaScript consumer. Negative compiler checks reject
+mismatched completion/input types, wrongly typed sends, and receiving through a
+public message reference.

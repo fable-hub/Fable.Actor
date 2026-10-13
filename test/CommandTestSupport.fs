@@ -6,11 +6,8 @@ open Scriptorium.Nib.Assertion
 open type Scriptorium.Quill.Test
 open Fable.Actor
 open Fable.Actor.Types
-open Fable.Actor.Commands
 open Fable.Actor.Tests.LifecycleTests
 open Fable.Actor.Tests.CommandObservations
-
-type CommandNext<'State, 'Message> = Fable.Actor.Commands.Next<'State, 'Message>
 
 let deadline = 2000
 let replyDeadline = 50
@@ -36,7 +33,7 @@ let sameEvents expected actual =
 
 let update events state =
     function
-    | Begin command -> CommandNext.Continue(state, command)
+    | Begin command -> (state, command)
     | Completed result ->
         record events (Outcome result)
 
@@ -45,22 +42,28 @@ let update events state =
             | Ok value -> state + value
             | Error _ -> state
 
-        CommandNext.Continue(next, Command.none)
+        (next, Command.none)
     | RequestFinished result ->
         record events (RequestOutcome result)
-        CommandNext.Continue(state, Command.none)
+        (state, Command.none)
     | Inspect ->
         record events (State state)
-        CommandNext.Continue(state, Command.none)
-    | Close -> CommandNext.Stop
+        (state, Command.none)
+    | Close -> state, Command.none
     | Defect -> failwith "update-defect"
 
-let owner events = CommandActor.start 0 (update events)
-let runtime (CommandActor target) = target
+let shouldStop _ =
+    function
+    | Close -> true
+    | _ -> false
+
+let owner events =
+    Actor.spawn (0, (update events), shouldStop = shouldStop)
+
 
 let stop target =
     actor {
-        let! result = CommandActor.stop deadline target
+        let! result = Actor.stop deadline target
         assertThat (completed result) isTrue
     }
 
@@ -70,20 +73,23 @@ type GateMessage =
     | Finish
 
 let gate admitted =
-    Actor.start [] (fun waiters (message, reply) ->
-        match message with
-        | Enter value ->
-            record admitted value
-            Continue((value, reply) :: waiters)
-        | Release ->
-            for value, waiter in waiters do
-                waiter.Reply(Ok value)
+    Actor.spawn (
+        [],
+        (fun waiters (message, reply) ->
+            match message with
+            | Enter value ->
+                record admitted value
+                Continue((value, reply) :: waiters)
+            | Release ->
+                for value, waiter in waiters do
+                    waiter.Reply(Ok value)
 
-            Continue []
-        | Finish -> Stop)
+                Continue []
+            | Finish -> Stop)
+    )
 
 let request timeout token service value =
-    Command.ofOperation (fun () -> Actor.callResult timeout token service (Enter value)) RequestFinished
+    Command.ofActor (fun () -> Actor.callResult timeout token service (Enter value)) () RequestFinished
 
 let case name operation =
     testAsync (name, fun _ -> toAsync (operation ()))
@@ -97,14 +103,14 @@ let reasonText (reason: obj) =
     | other -> sprintf "%A" other
 #endif
 
-let supervised events update =
+let supervised events (update: int -> Message -> int * Command<Message>) =
     let handles = journal ()
 
     let parent =
         Actor.spawn (fun inbox ->
             actor {
                 Actor.trapExits ()
-                let child = CommandActor.startLinked inbox 0 update
+                let child = Actor.spawnLinked (inbox.Reference, 0, update, shouldStop = shouldStop)
                 record handles child
                 let! message = inbox.Receive()
 

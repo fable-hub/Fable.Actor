@@ -248,6 +248,7 @@ let fromContext
 ///
 /// decision: preserves the incoming trampoline so immediately completed actor steps still yield before exhausting the stack
 /// invariant: terminal continuation chains also yield through the shared trampoline
+/// decision: nested input and outer result types are independent so object-mailbox receives decode within the same trampoline
 #if FABLE_COMPILER_PYTHON
 // invariant: an erased F# unit success supplies None to the Python context callback
 [<Fable.Core.Emit("lambda ctx: $0(((lambda value=None: ctx.on_success(value), ctx.on_error, ctx.on_cancel), ctx.cancel_token), lambda op: lambda cs: op(ctx.__class__(ctx.trampoline, ctx.cancel_token, *(lambda value=None, next=next: ctx.trampoline.run(lambda: next(value)) for next in cs))))")>]
@@ -257,7 +258,7 @@ let fromContext
 let fromContextWithRun
     (body:
         (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) * System.Threading.CancellationToken
-            -> (Async<'T> -> (('T -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) -> unit)
+            -> (Async<'Input> -> (('Input -> unit) * (exn -> unit) * (System.OperationCanceledException -> unit)) -> unit)
             -> unit)
     : Async<'T> =
     nativeOnly

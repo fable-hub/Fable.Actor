@@ -29,24 +29,27 @@ type CollectorMsg<'T> =
 
 // decision: holds collector replies until the expected messages arrive so independent senders do not rely on scheduler timing
 let private collector () =
-    Actor.start ([], []) (fun (results, waiters) (msg, rc) ->
-        match msg with
-        | Collect x ->
-            let results = results @ [ x ]
-            let count = List.length results
+    Actor.spawn (
+        ([], []),
+        (fun (results, waiters) (msg, rc) ->
+            match msg with
+            | Collect x ->
+                let results = results @ [ x ]
+                let count = List.length results
 
-            let ready, pending =
-                waiters
-                |> List.partition (fun (expected, _) -> expected <= count)
+                let ready, pending =
+                    waiters
+                    |> List.partition (fun (expected, _) -> expected <= count)
 
-            for _, reply in ready do
-                reply.Reply results
+                for _, reply in ready do
+                    reply.Reply results
 
-            Continue(results, pending)
-        | GetResults expected when expected > List.length results -> Continue(results, (expected, rc) :: waiters)
-        | GetResults _ ->
-            rc.Reply results
-            Continue(results, waiters))
+                Continue(results, pending)
+            | GetResults expected when expected > List.length results -> Continue(results, (expected, rc) :: waiters)
+            | GetResults _ ->
+                rc.Reply results
+                Continue(results, waiters))
+    )
 
 type TimerMsg =
     | Tick
@@ -164,12 +167,15 @@ let private receiveTests =
                     toAsync (
                         actor {
                             let a =
-                                Actor.start "" (fun state (msg, rc) ->
-                                    match msg with
-                                    | SetValue s -> Continue s
-                                    | GetValue ->
-                                        rc.Reply state
-                                        Continue state)
+                                Actor.spawn (
+                                    "",
+                                    (fun state (msg, rc) ->
+                                        match msg with
+                                        | SetValue s -> Continue s
+                                        | GetValue ->
+                                            rc.Reply state
+                                            Continue state)
+                                )
 
                             Actor.cast a (SetValue "hello")
                             do! sleep 10
@@ -185,12 +191,15 @@ let private receiveTests =
                     toAsync (
                         actor {
                             let a =
-                                Actor.start [] (fun items (msg, rc) ->
-                                    match msg with
-                                    | AddItem n -> Continue(items @ [ n ])
-                                    | GetItems ->
-                                        rc.Reply items
-                                        Continue items)
+                                Actor.spawn (
+                                    [],
+                                    (fun items (msg, rc) ->
+                                        match msg with
+                                        | AddItem n -> Continue(items @ [ n ])
+                                        | GetItems ->
+                                            rc.Reply items
+                                            Continue items)
+                                )
 
                             Actor.cast a (AddItem 1)
                             Actor.cast a (AddItem 2)
@@ -208,12 +217,15 @@ let private receiveTests =
                     toAsync (
                         actor {
                             let a =
-                                Actor.start 0 (fun state (msg, rc) ->
-                                    match msg with
-                                    | SetInt n -> Continue n
-                                    | GetInt ->
-                                        rc.Reply state
-                                        Continue state)
+                                Actor.spawn (
+                                    0,
+                                    (fun state (msg, rc) ->
+                                        match msg with
+                                        | SetInt n -> Continue n
+                                        | GetInt ->
+                                            rc.Reply state
+                                            Continue state)
+                                )
 
                             a.Post((SetInt 42, { Reply = fun _ -> () }))
                             do! sleep 10
@@ -239,13 +251,16 @@ let private startTests =
                     toAsync (
                         actor {
                             let counter =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Increment -> Continue(count + 1)
-                                    | Decrement -> Continue(count - 1)
-                                    | GetCount ->
-                                        rc.Reply count
-                                        Continue count)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Increment -> Continue(count + 1)
+                                        | Decrement -> Continue(count - 1)
+                                        | GetCount ->
+                                            rc.Reply count
+                                            Continue count)
+                                )
 
                             Actor.cast counter Increment
                             Actor.cast counter Increment
@@ -266,12 +281,15 @@ let private startTests =
                     toAsync (
                         actor {
                             let counter =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Add _ -> Continue(count + 1)
-                                    | Done ->
-                                        rc.Reply count
-                                        Stop)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Add _ -> Continue(count + 1)
+                                        | Done ->
+                                            rc.Reply count
+                                            Stop)
+                                )
 
                             Actor.cast counter (Add 1)
                             Actor.cast counter (Add 1)
@@ -301,13 +319,16 @@ let private callTests =
                     toAsync (
                         actor {
                             let counter =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Increment -> Continue(count + 1)
-                                    | Decrement -> Continue(count - 1)
-                                    | GetCount ->
-                                        rc.Reply count
-                                        Continue count)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Increment -> Continue(count + 1)
+                                        | Decrement -> Continue(count - 1)
+                                        | GetCount ->
+                                            rc.Reply count
+                                            Continue count)
+                                )
 
                             Actor.cast counter Increment
                             Actor.cast counter Increment
@@ -327,13 +348,16 @@ let private callTests =
                     toAsync (
                         actor {
                             let counter =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Increment -> Continue(count + 1)
-                                    | Decrement -> Continue(count - 1)
-                                    | GetCount ->
-                                        rc.Reply count
-                                        Continue count)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Increment -> Continue(count + 1)
+                                        | Decrement -> Continue(count - 1)
+                                        | GetCount ->
+                                            rc.Reply count
+                                            Continue count)
+                                )
 
                             Actor.cast counter Increment
                             do! sleep 10
@@ -365,12 +389,15 @@ let private scheduleTests =
                     toAsync (
                         actor {
                             let ticker =
-                                Actor.start 0 (fun count (msg, rc) ->
-                                    match msg with
-                                    | Tick -> Continue(count + 1)
-                                    | GetTicks ->
-                                        rc.Reply count
-                                        Continue count)
+                                Actor.spawn (
+                                    0,
+                                    (fun count (msg, rc) ->
+                                        match msg with
+                                        | Tick -> Continue(count + 1)
+                                        | GetTicks ->
+                                            rc.Reply count
+                                            Continue count)
+                                )
 
                             Actor.schedule 10 (fun () -> Actor.cast ticker Tick)
                             |> ignore

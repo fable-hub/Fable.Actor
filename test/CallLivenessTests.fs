@@ -75,9 +75,12 @@ let tests =
                     toAsync (
                         actor {
                             let target =
-                                Actor.start () (fun state (msg, rc) ->
-                                    rc.Reply()
-                                    Continue state)
+                                Actor.spawn (
+                                    (),
+                                    (fun state (msg, rc) ->
+                                        rc.Reply()
+                                        Continue state)
+                                )
 
                             let! result = Actor.callResult 2000 CancellationToken.None target ()
 

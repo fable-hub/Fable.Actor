@@ -25,15 +25,18 @@ let private linkTests =
                                     Actor.trapExits ()
 
                                     let child: Actor<string> =
-                                        Actor.spawnLinked inbox (fun childInbox ->
-                                            let rec loop () =
-                                                actor {
-                                                    let! _msg = childInbox.Receive()
-                                                    failwith "crash!"
-                                                    return! loop ()
-                                                }
+                                        Actor.spawnLinked (
+                                            inbox.Reference,
+                                            (fun childInbox ->
+                                                let rec loop () =
+                                                    actor {
+                                                        let! _msg = childInbox.Receive()
+                                                        failwith "crash!"
+                                                        return! loop ()
+                                                    }
 
-                                            loop ())
+                                                loop ())
+                                        )
 
                                     // Send a message to make the child crash
                                     Actor.send child "boom"
@@ -76,7 +79,7 @@ let private supervisedTests =
                                     Actor.trapExits ()
 
                                     let child =
-                                        Actor.spawnSupervised inbox (OneForOne(fun _ex -> Directive.Restart)) (fun childInbox ->
+                                        Actor.spawnSupervised inbox.Reference (OneForOne(fun _ex -> Directive.Restart)) (fun childInbox ->
                                             let rec loop () =
                                                 actor {
                                                     let! msg = childInbox.Receive()
@@ -100,7 +103,7 @@ let private supervisedTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                match Actor.handleChildExit inbox current exited with
+                                                match Actor.handleChildExit inbox.Reference current exited with
                                                 | ChildExitResult.Restarted replacement ->
                                                     Actor.send replacement.Actor "probe"
                                                     return! loop replacement
@@ -129,7 +132,7 @@ let private supervisedTests =
                                     Actor.trapExits ()
 
                                     let child =
-                                        Actor.spawnSupervised inbox (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
+                                        Actor.spawnSupervised inbox.Reference (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
                                             let rec loop () =
                                                 actor {
                                                     let! _msg = childInbox.Receive()
@@ -147,7 +150,7 @@ let private supervisedTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                match Actor.handleChildExit inbox child exited with
+                                                match Actor.handleChildExit inbox.Reference child exited with
                                                 | ChildExitResult.Stopped -> Actor.cast flag (Some true)
                                                 | ChildExitResult.Restarted _ -> ()
                                             | None -> ()
@@ -186,7 +189,7 @@ let private stopAbnormalTests =
                                     Actor.trapExits ()
 
                                     let stoppingChild =
-                                        Actor.spawnSupervised inbox (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
+                                        Actor.spawnSupervised inbox.Reference (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
                                             let rec loop () =
                                                 actor {
                                                     let! msg = childInbox.Receive()
@@ -207,7 +210,7 @@ let private stopAbnormalTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                Actor.handleChildExit inbox stoppingChild exited
+                                                Actor.handleChildExit inbox.Reference stoppingChild exited
                                                 |> ignore
 
                                                 Actor.cast flag (Some true)
@@ -237,7 +240,7 @@ let private stopAbnormalTests =
                                     Actor.trapExits ()
 
                                     let child =
-                                        Actor.spawnSupervised inbox (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
+                                        Actor.spawnSupervised inbox.Reference (OneForOne(fun _ex -> Directive.Stop)) (fun childInbox ->
                                             let rec loop (state: int) =
                                                 actor {
                                                     let! msg = childInbox.Receive()
@@ -257,7 +260,9 @@ let private stopAbnormalTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                Actor.handleChildExit inbox child exited |> ignore
+                                                Actor.handleChildExit inbox.Reference child exited
+                                                |> ignore
+
                                                 Actor.cast flag (Some true)
                                             | None -> ()
 
@@ -285,7 +290,7 @@ let private stopAbnormalTests =
                                     Actor.trapExits ()
 
                                     let child =
-                                        Actor.spawnSupervised inbox (OneForOne(fun _ex -> Directive.Restart)) (fun childInbox ->
+                                        Actor.spawnSupervised inbox.Reference (OneForOne(fun _ex -> Directive.Restart)) (fun childInbox ->
                                             let handler state msg =
                                                 match msg with
                                                 | "crash" -> StopAbnormal(ProcessExitException "handler decided to crash")
@@ -311,7 +316,9 @@ let private stopAbnormalTests =
 
                                             match Actor.tryAsChildExited msg with
                                             | Some exited ->
-                                                Actor.handleChildExit inbox child exited |> ignore
+                                                Actor.handleChildExit inbox.Reference child exited
+                                                |> ignore
+
                                                 Actor.cast flag (Some true)
                                             | None -> ()
 

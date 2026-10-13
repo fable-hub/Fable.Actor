@@ -21,4 +21,5 @@ let main _ =
         CallLivenessTests.tests
         CooperativeTests.tests
         CommandTests.tests
+        UnifiedApiTests.tests
     ]

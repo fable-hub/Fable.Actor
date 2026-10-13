@@ -40,15 +40,18 @@ type DagMsg =
 /// decision: replies to HelloFrom with a raw Erlang message to demonstrate bypassing the actor envelope
 /// invariant: AskName replies through ReplyChannel while HelloFrom replies directly to joePid
 let startDag (joePid: obj) : Actor<DagMsg * ReplyChannel<string>> =
-    Actor.start joePid (fun joePid (msg, rc) ->
-        match msg with
-        | HelloFrom name ->
-            printfmt "  [Dag/F#]     Received hello from ~s~n" [ name ]
-            // Reply directly to Joe using raw Erlang send (no envelope)
-            rawSend joePid "Hei Joe! Dag her. Hyggelig å møte deg!"
-            Continue joePid
+    Actor.spawn (
+        joePid,
+        (fun joePid (msg, rc) ->
+            match msg with
+            | HelloFrom name ->
+                printfmt "  [Dag/F#]     Received hello from ~s~n" [ name ]
+                // Reply directly to Joe using raw Erlang send (no envelope)
+                rawSend joePid "Hei Joe! Dag her. Hyggelig å møte deg!"
+                Continue joePid
 
-        | AskName ->
-            printfmt "  [Dag/F#]     Someone asked my name~n" []
-            rc.Reply "Dag Brattli"
-            Continue joePid)
+            | AskName ->
+                printfmt "  [Dag/F#]     Someone asked my name~n" []
+                rc.Reply "Dag Brattli"
+                Continue joePid)
+    )

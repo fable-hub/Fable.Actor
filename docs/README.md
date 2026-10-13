@@ -1,6 +1,8 @@
 # Documentation
 
 Read the guides in order, or jump to the feature you need.
+[One actor API](actors.md) explains the factory overloads, message references,
+inboxes and migration from the earlier surface.
 
 | Step | Guide | What you learn |
 | --- | --- | --- |
