@@ -427,11 +427,40 @@ module internal ActorRuntime =
     /// Format a crash reason as a string.
     let formatReason (reason: obj) : string = Platform.formatReason reason
 
+    let private callCancelled (token: System.Threading.CancellationToken) (ambient: System.Threading.CancellationToken) =
+        ambient.IsCancellationRequested
+        || token.IsCancellationRequested
+
+    // Cancellation tokens do not wake native receive; replies and target-death signals do.
+    // decision: 5 ms targets responsive cancellation with roughly 200 idle checks per second, without a helper process
+    // tradeoff: shorter slices add idle wakeups; longer slices delay cancellation, and scheduling can extend either interval
+    [<Literal>]
+    let private callCancellationPollIntervalMs = 5
+
+    // decision: an absolute monotonic deadline keeps repeated receive slices from extending the caller's timeout
+    let private callReceiveSlice expires =
+        match expires with
+        | None -> callCancellationPollIntervalMs
+        | Some deadline -> int (max 0L (min (int64 callCancellationPollIntervalMs) (deadline - monotonicMilliseconds ())))
+
+    // invariant: cancellation is checked before deadline expiry and before receiving a queued reply
+    let rec private waitForCallReply token ambient expires alias monitor =
+        if callCancelled token ambient then
+            CallResult.Cancelled
+        else
+            match callReceiveSlice expires with
+            | 0 -> CallResult.TimedOut
+            | slice ->
+                match recvCall alias monitor slice with
+                | 0, value -> CallResult.Reply(unbox value)
+                | 1, reason -> CallResult.TargetTerminated(exitReason reason)
+                | _ -> waitForCallReply token ambient expires alias monitor
+
     /// Monitored call with a revocable reply destination.
     ///
     /// decision: uses a process alias so late replies are dropped before entering the caller mailbox
     /// invariant: every settlement removes its alias, monitor, and any already queued duplicate replies
-    /// tradeoff: checks explicit caller cancellation in receive slices of at most 5 ms without a per-call helper process
+    /// invariant: cleanup finishes before invoking the continuation, whose failure belongs to the calling workflow
     let private callCore
         timeout
         (token: System.Threading.CancellationToken)
@@ -449,34 +478,7 @@ module internal ActorRuntime =
                             timeout
                             |> Option.map (fun ms -> monotonicMilliseconds () + int64 ms)
 
-                        let rec wait () =
-                            if
-                                ambient.IsCancellationRequested
-                                || token.IsCancellationRequested
-                            then
-                                CallResult.Cancelled
-                            else
-                                let remaining =
-                                    expires
-                                    |> Option.map (fun value -> value - monotonicMilliseconds ())
-
-                                match remaining with
-                                | Some ms when ms <= 0L -> CallResult.TimedOut
-                                | _ ->
-                                    let slice =
-                                        remaining
-                                        |> Option.map (fun ms -> min 5 (int ms))
-                                        |> Option.defaultValue 5
-
-                                    match recvCall alias monitor slice with
-                                    | 0, value -> CallResult.Reply(unbox value)
-                                    | 1, reason -> CallResult.TargetTerminated(exitReason reason)
-                                    | _ -> wait ()
-
-                        if
-                            ambient.IsCancellationRequested
-                            || token.IsCancellationRequested
-                        then
+                        if callCancelled token ambient then
                             CallResult.Cancelled
                         else
                             target.Post(
@@ -486,7 +488,7 @@ module internal ActorRuntime =
                                 }
                             )
 
-                            wait ()
+                            waitForCallReply token ambient expires alias monitor
                     finally
                         endCall alias monitor
 

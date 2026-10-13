@@ -93,6 +93,40 @@ let tests =
                         }
                     )
             )
+#if FABLE_COMPILER_BEAM
+            testAsync (
+                "reply cleanup precedes a failing continuation",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let delivered, held = barrier (), reporter None
+                            let target = worker delivered held
+                            let beforeQueue, beforeMonitors = queueLength (), monitorCount ()
+                            let mutable failed = false
+
+                            // invariant: downstream continuation failures propagate after the call releases its native resources
+                            try
+                                (Actor.callResult 2000 CancellationToken.None target (Echo 1))
+                                    .Run(fun result ->
+                                        assertThat result (isEqualTo (CallResult.Reply 1))
+                                        assertThat (queueLength ()) (isEqualTo beforeQueue)
+                                        assertThat (monitorCount ()) (isEqualTo beforeMonitors)
+                                        failwith "call-continuation-defect")
+                            with error ->
+                                assertThat error.Message (isEqualTo "call-continuation-defect")
+                                failed <- true
+
+                            assertThat failed isTrue
+                            let! fresh = Actor.callWithTimeout 2000 target (Echo 2)
+                            assertThat fresh (isEqualTo 2)
+                            let! _ = Actor.stop 2000 target
+                            let! _ = Actor.stop 2000 delivered
+                            let! _ = Actor.stop 2000 held
+                            return ()
+                        }
+                    )
+            )
+#endif
             testAsync (
                 "handler crashes settle rather than hanging",
                 fun _ ->
