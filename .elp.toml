@@ -1,7 +1,0 @@
-[build_info]
-apps = [
-    {name = "fable_actor", dir = "apps/fable_actor", src_dirs = ["src"]},
-    {name = "fable_library_beam", dir = "apps/fable_actor/fable_modules/fable-library-beam", src_dirs = ["src"]},
-]
-deps = []
-otp_lib_dir = "/opt/homebrew/Cellar/erlang/28.3.1/lib/erlang/lib"
