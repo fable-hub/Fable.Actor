@@ -20,3 +20,10 @@ output/
 # JS dependencies
 node_modules/
 package-lock.json
+# Editor and language-server state is personal. Shared editor contracts stay tracked
+# (.editorconfig); per-workspace settings and local tool paths are not. The elp files
+# describe this project's generated BEAM output and a local OTP install, so each
+# developer keeps them outside the repository.
+.vscode/
+.elp.toml
+.elp_lint.toml

@@ -78,7 +78,7 @@ CommandTests.fs            UnifiedApiTests.fs     TimefliesExampleTests.fs
 Main.fs
 ```
 
-Assertions come from [Scriptorium](https://github.com/fable-hub/Fable.UI) — Nib for
+Assertions come from [Scriptorium](https://github.com/fable-hub/Scriptorium) — Nib for
 `assertThat x (isEqualTo y)`, Quill for the runner (`runTests [ ... ]`).
 
 Do **not** split this into a project per target. Fable.Giraffe does, because it has a src project
