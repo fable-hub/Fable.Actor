@@ -1,6 +1,7 @@
 ---
 last_commit_released: 7d056df3a0ceb62db2ce3bb87d6daf6bbabce4d0
 name: Fable.Actor
+force_version: 5.0.0-rc.18
 ---
 
 # Changelog
