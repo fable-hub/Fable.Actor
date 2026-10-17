@@ -1,11 +1,18 @@
 # Fable.Actor
 
-> Experimental / work in progress.
+> Fable.Actor requires Fable v5.22 (or higher).
 
-Fable.Actor is an actor library for F# on .NET, JavaScript, Python and BEAM.
-Write message loops with `actor { }`, keep state inside each actor, and communicate
-through typed messages. BEAM uses native processes; other targets use
-`MailboxProcessor`.
+Fable.Actor is a cross-platform actor library for F# on .NET, JavaScript, Python
+and BEAM. It gives explicit message loops, state handlers and handlers that start
+finite work the same typed actor reference and messaging API. It also provides
+request/reply with explicit timeout and termination outcomes, linked-child
+supervision, and optional cooperative lifetimes that observe owned cleanup.
+
+On .NET, JavaScript and Python, `MailboxProcessor` supplies the underlying
+mailbox; Fable.Actor adds those actor-level APIs and lifecycle rules around it.
+On BEAM, actors run as native Erlang processes. Write portable bodies with
+`actor { }`, keep state inside each actor, and communicate through typed messages.
+Shutdown details differ by target; see [Platform notes](docs/platforms.md).
 
 ```fsharp
 open Fable.Actor
