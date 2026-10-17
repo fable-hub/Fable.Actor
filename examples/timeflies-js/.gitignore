@@ -1,7 +1,4 @@
+# decision: generated Fable output lands in output/, so nothing here hides a stray sidecar under src/ anymore
 node_modules/
-src/bin/
-src/obj/
-src/**/*.fs.js
-src/**/*.fs.js.map
-src/fable_modules/
+output/
 dist/

@@ -27,24 +27,26 @@ let mainAsync =
         let labels =
             Timeflies.text
             |> Seq.toList
-            |> List.mapi (fun _i c ->
-                Label(frame, text = string c, fg = "#00ffff", bg = "#1a1a2e"))
+            |> List.mapi (fun _i c -> Label(frame, text = string c, fg = "#00ffff", bg = "#1a1a2e"))
             |> Array.ofList
 
         // sendFn: parse JSON and place the label
         let sendFn (json: string) =
             let data = parseJson json
-            let index = unbox<int> (getField data "index")
-            let x = unbox<int> (getField data "x")
-            let y = unbox<int> (getField data "y")
-            labels.[index].place (x, y)
+            let index = unbox<int>(getField data "index")
+            let x = unbox<int>(getField data "x")
+            let y = unbox<int>(getField data "y")
+            labels.[index].place(x, y)
 
         let distributor = Timeflies.setupPipeline sendFn
 
         frame.bind (
             "<Motion>",
             fun (ev: Event) ->
-                Actor.send distributor { Timeflies.X = ev.x; Timeflies.Y = ev.y }
+                Actor.send distributor {
+                    Timeflies.X = ev.x
+                    Timeflies.Y = ev.y
+                }
         )
         |> ignore
 

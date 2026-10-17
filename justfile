@@ -16,14 +16,21 @@ src_path := "src/Fable.Actor"
 build_path := "build"
 test_path := "test"
 
+# Every hand-written F# directory, including the examples and the benchmark harness.
+# decision: formats examples and benchmarks because a recipe that no CI job compiles also never gets formatted
+# assumption: Fantomas skips generated fable_modules, node_modules, bin and obj through .gitignore
+format_paths := "src " + test_path + " benchmarks/ordinary-beam examples/timeflies/src examples/timeflies-js/src examples/timeflies-python/src examples/timeflies-beam/src examples/interop/src"
+
 # List available recipes
 default:
     @just --list
 
-# Clean build artifacts
+# invariant: no generated *.fs.js survives in the library sources, so a sidecar can never shadow a module
+# Clean build artifacts and any generated sidecar left in the library sources
 clean:
     rm -rf apps _build {{build_path}}
-    rm -rf {{timeflies_path}}/apps {{timeflies_path}}/_build {{timeflies_py_out}}
+    rm -rf {{timeflies_path}}/apps {{timeflies_path}}/_build {{timeflies_py_out}} {{timeflies_js_out}}
+    rm -f {{src_path}}/*.fs.js
 
 # --- Build ---
 
@@ -39,7 +46,11 @@ check:
 
 # Format source files
 format:
-    dotnet fantomas src {{test_path}}
+    dotnet fantomas {{format_paths}}
+
+# Verify formatting without rewriting files
+format-check:
+    dotnet fantomas --check {{format_paths}}
 
 # Setup tooling
 restore:
@@ -176,12 +187,24 @@ run-timeflies-python: build-timeflies-python
 
 timeflies_js_path := "examples/timeflies-js"
 timeflies_js_src := timeflies_js_path / "src"
+timeflies_js_out := timeflies_js_path / "output"
 
+# decision: emits to output/ so the referenced Fable.Actor sources keep their own directory free of generated JS
+# invariant: index.html loads ./output/App.js, matching this recipe's outDir
 # Build timeflies-js: F# → JavaScript via Fable
 build-timeflies-js:
     cd {{timeflies_js_path}} && npm install
-    cd {{timeflies_js_path}} && {{fable}} src --noCache
+    cd {{timeflies_js_path}} && {{fable}} src --noCache --outDir output
 
 # Run timeflies-js demo on http://localhost:3000
 run-timeflies-js: build-timeflies-js
     cd {{timeflies_js_path}} && npx vite
+
+# --- Interop example ---
+
+# decision: compiles without running because the demo needs a hand-written Erlang peer to talk to
+# Compile the native Erlang interoperability example to BEAM
+build-interop:
+    rm -rf {{build_path}}/interop
+    {{fable}} examples/interop/src --exclude Fable.Core --lang beam --outDir {{build_path}}/interop --noCache
+    cd {{build_path}}/interop && {{beam}} rebar3 compile
