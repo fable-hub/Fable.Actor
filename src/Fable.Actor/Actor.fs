@@ -383,6 +383,7 @@ module internal ActorRuntime =
     let kill (actor: Actor<'Msg>) : unit = killProcess actor.Pid
 
     /// Kill and await native process death within a positive cleanup deadline.
+    /// Completed Cancelled confirms death, not body cancellation or an earlier exit.
     /// Native kill does not execute actor finalizers.
     let stop (cleanupDeadline: int) (target: Actor<'Msg>) : ActorOp<StopResult> =
         if cleanupDeadline <= 0 then

@@ -152,9 +152,11 @@ type Actor =
 
     /// Request ordinary shutdown; native BEAM kill skips finalizers.
     static member kill target = ActorRuntime.kill target
-    /// Observe ordinary shutdown; use Lifetimes.stop for a cooperative capability.
+    /// Observe ordinary shutdown; on BEAM, Completed Cancelled confirms process death
+    /// but does not prove body cancellation, finalization, or an earlier exit reason.
+    /// Use Lifetimes.stop for cooperative shutdown and retained exit outcomes.
     static member stop deadline target = ActorRuntime.stop deadline target
-    /// Observe ordinary shutdown from an Async host.
+    /// Observe ordinary shutdown from an Async host with the same target contract.
     static member asyncStop deadline target = ActorRuntime.asyncStop deadline target
     /// Enable native exit trapping inside a supervising body; emulated bodies already receive child failures.
     static member trapExits() = ActorRuntime.trapExits ()
