@@ -95,10 +95,10 @@ finalizers retain their separate implementation because cleanup shielding and
 observable cleanup failures are lifetime policy.
 
 Release validation passes .NET 84, JavaScript 82, Python 82 and BEAM 81 tests.
-The Python suite uses the locked fable-library 5.20.1; this release's BEAM fixes
-come from the compiler-bundled runtime. The two new BEAM tests cover compiled F#
-plain Async resource scopes and cancellation identity, alongside the independent
-runtime probes below.
+At that validation point, the Python suite used locked fable-library 5.20.1;
+the BEAM fixes came from the compiler-bundled runtime. The two new BEAM tests
+cover compiled F# plain Async resource scopes and cancellation identity,
+alongside the independent runtime probes below.
 
 The ordinary actor benchmark compares rc.15 and this adapter removal with both
 compiled by Fable 5.21.0, matching bundled runtime sources and pinned OTP. All five

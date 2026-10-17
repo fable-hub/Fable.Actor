@@ -87,9 +87,9 @@ Each target provides a native `fable_actor_platform` module implementing `IActor
 ## Dependencies
 
 - .NET SDK 10+
-- Fable 5.16 (local tool, see `.config/dotnet-tools.json`) — 5.11 emits Fable package
+- Fable 5.22 (local tool, see `.config/dotnet-tools.json`) — 5.11 emits Fable package
   sub-namespaces into nested `Sinks/src/` directories that rebar3 never compiles, which breaks
   Scriptorium.Parchment on BEAM
 - Fable.Core 5.0.0 (library) / 5.2.0 (test projects, required by Scriptorium)
-- fable-library 5.16+ (Python target)
+- fable-library 5.22+ (Python target)
 - Scriptorium.Quill 0.5.1 + Scriptorium.Nib 0.4.1 (test projects only)

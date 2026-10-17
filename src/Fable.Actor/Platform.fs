@@ -222,9 +222,6 @@ open Fable.Core
 
 /// Build a context-aware Async without a preceding cancellation checkpoint.
 ///
-/// TODO(upstream): retire the JS/Python branches only when native TryFinally installs
-/// compensation before its cancellation checkpoint and actor cleanup failures remain observable.
-///
 /// decision: hands cancellation to the actor settlement gate so acquired resources receive cleanup even when their token is already cancelled
 #if FABLE_COMPILER_PYTHON
 // invariant: an erased F# unit success supplies None to the Python context callback
@@ -242,9 +239,6 @@ let fromContext
 #if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
 
 /// Run a nested Async using the incoming trampoline and guarded continuations.
-///
-/// TODO(upstream): retire these context adapters when native mailbox cancellation and
-/// finalizers meet the actor contract without creating a separate Async trampoline.
 ///
 /// decision: preserves the incoming trampoline so immediately completed actor steps still yield before exhausting the stack
 /// invariant: terminal continuation chains also yield through the shared trampoline

@@ -201,22 +201,10 @@ type ActorInbox<'Msg> internal (mb: MailboxProcessor<'Msg>, cts: System.Threadin
     member _.Pid = reference.Pid
     member internal _.Lifetime = lifetime
     member _.Post(message: 'Msg) = reference.Post message
-    // TODO(upstream): this check pairs with spawnOwned's synthetic cancellation wakeup.
-    // Retire both only after published JS/Python Receive wakes and cancels correctly;
-    // https://github.com/fable-compiler/Fable/pull/5038 documents this remaining mailbox gap.
+    // assumption: Fable 5.22 JS/Python Receive cancels an idle waiter when the actor token is cancelled
     member _.Receive() : Async<'Msg> =
 #if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
-        // decision: reuses the workflow trampoline so recursive immediately completed receives remain stack safe
-        Lifetime.withContextRun (fun ((ok, error, cancelled), _) run ->
-            run
-                (mb.Receive())
-                ((fun msg ->
-                    if cts.IsCancellationRequested then
-                        cancelled (System.OperationCanceledException())
-                    else
-                        ok msg),
-                 error,
-                 cancelled))
+        mb.Receive()
 #else
         Async.FromContinuations(fun (ok, error, cancelled) ->
             Async.StartWithContinuations(
@@ -268,7 +256,7 @@ type ActorBuilder() =
     ///
     /// invariant: duplicate terminal callbacks from supplied Async work cannot repeat cleanup
     ///
-    /// decision: routes cleanup exceptions explicitly because standard Async finalizers can lose failures during cancellation
+    /// decision: routes cleanup exceptions explicitly because Async.TryCancelled preserves cancellation and suppresses compensation exceptions
     member _.TryFinally(body: Async<'T>, compensation: unit -> unit) : Async<'T> =
 #if !FABLE_COMPILER
         Lifetime.finallyNative body compensation
@@ -600,12 +588,6 @@ module internal ActorRuntime =
             new MailboxProcessor<'Msg>((fun _ -> async { return () }), cancellationToken = cts.Token)
 
         let inbox = ActorInbox(mb, cts, lifetime)
-        // TODO(upstream): mailbox wakeup is not fixed by https://github.com/fable-compiler/Fable/pull/5038.
-        // Retire this synthetic post and Receive's cancellation check only when a published
-        // JS/Python mailbox wakes idle Receive on cancellation without delivering user work.
-        // decision: wakes the portable mailbox on cancellation because JS/Python Receive does not register a wakeup
-        // invariant: the synthetic wakeup never reaches user code because the workflow token is already cancelled
-        lifetime.AddResource(Lifetime.cancellation cts.Token (fun () -> mb.Post Unchecked.defaultof<'Msg>))
 #if !FABLE_COMPILER
         lifetime.AddResource(mb :> System.IDisposable)
 #endif
