@@ -180,6 +180,13 @@ type Actor =
     /// Receive through a body inbox.
     static member receive(inbox: ActorInbox<'Message>) = inbox.Receive()
 #if FABLE_COMPILER_BEAM
+    /// Wrap a BEAM PID that receives Fable.Actor messages in a typed message reference.
+    /// The reference supplies messaging only; it does not acquire lifetime ownership.
+    ///
+    /// decision: uses the ordinary reference encoder so remote sends retain the actor message envelope
+    /// assumption: the PID belongs to a process that understands the Fable.Actor message protocol
+    static member fromPid(pid: Fable.Beam.Pid<'Message>) : Actor<'Message> = Actor<'Message>(unbox (box pid), box)
+
     /// Receive the current BEAM process's next actor-protocol message for native integration.
     /// This does not receive from a shared Actor reference or another process's mailbox.
     static member receive<'Message>() = ActorRuntime.receive<'Message>()

@@ -29,6 +29,9 @@ in the calling process.
 On .NET, JavaScript and Python it requests cooperative cancellation; on BEAM it
 requests native kill. For native integration, `Actor.pid` exposes a target-specific
 handle rather than a portable application value.
+On BEAM, `Actor.fromPid pid` wraps a local or remote `Pid<Message>` as a
+send-only `Actor<Message>` reference. The process must use Fable.Actor's message
+protocol. Rewrapping does not acquire lifetime ownership or retain its exit.
 
 ## Cleanup
 
