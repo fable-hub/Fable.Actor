@@ -22,4 +22,5 @@ let main _ =
         CooperativeTests.tests
         CommandTests.tests
         UnifiedApiTests.tests
+        TimefliesExampleTests.tests
     ]

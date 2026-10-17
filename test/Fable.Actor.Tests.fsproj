@@ -18,6 +18,7 @@
     <Compile Include="CommandTestSupport.fs" />
     <Compile Include="CommandTests.fs" />
     <Compile Include="UnifiedApiTests.fs" />
+    <Compile Include="TimefliesExampleTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>
@@ -27,5 +28,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../src/Fable.Actor/Fable.Actor.fsproj" />
+    <!-- decision: the one suite also covers the shared example core, because an example that only
+                    compiles is an example whose actor topology was never executed
+         invariant: "one suite, one project" bounds the library's API contract, not the number of
+                    subjects the suite may exercise
+         tradeoff: the library test project now builds an example, so example breakage fails the suite -->
+    <ProjectReference Include="../examples/timeflies/src/Timeflies.Common.fsproj" />
   </ItemGroup>
 </Project>
