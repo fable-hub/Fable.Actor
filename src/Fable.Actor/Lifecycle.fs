@@ -15,9 +15,7 @@ module internal Lifetime =
 
     let withContext body : Async<'T> =
 #if FABLE_COMPILER_PYTHON || FABLE_COMPILER_JAVASCRIPT
-        // TODO(upstream): native JS/Python TryFinally checks cancellation before installing
-        // compensation. Retire this adapter only when cancelled acquisition still disposes
-        // and actor cleanup failures remain observable.
+        // decision: enters the settlement callback before an ambient cancellation checkpoint so already cancelled calls still release acquired resources
         Platform.fromContext body
 #else
         async {

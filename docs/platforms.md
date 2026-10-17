@@ -51,3 +51,5 @@ through [pyproject.toml](../pyproject.toml) and [uv.lock](../uv.lock). Use those
 versions when reproducing repository behavior.
 BEAM compilation requires Fable 5.21.0 or later for typed cancellation and the
 named-token `Async.RunSynchronously` bridge.
+The JavaScript and Python actor runtimes require Fable 5.22.0 or later so an idle
+mailbox receive settles directly when its actor token is cancelled.
