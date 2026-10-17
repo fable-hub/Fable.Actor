@@ -31,9 +31,9 @@ let App () =
     React.useEffectOnce (fun () ->
         let sendFn (json: string) =
             let data = parseJson json
-            let index = unbox<int> (getField data "index")
-            let x = unbox<int> (getField data "x")
-            let y = unbox<int> (getField data "y")
+            let index = unbox<int>(getField data "index")
+            let x = unbox<int>(getField data "x")
+            let y = unbox<int>(getField data "y")
             posRef.current.[index] <- (x, y)
             tickRef.current <- tickRef.current + 1
             setTick tickRef.current
@@ -41,8 +41,10 @@ let App () =
         let distributor = Timeflies.setupPipeline sendFn
         distributorRef.current <- Some distributor
 
-        { new System.IDisposable with
-            member _.Dispose() = Actor.kill distributor })
+        {
+            new System.IDisposable with
+                member _.Dispose() = Actor.kill distributor
+        })
 
     // Listen for mouse moves globally
     React.useEffectOnce (fun () ->
@@ -51,19 +53,21 @@ let App () =
 
             distributorRef.current
             |> Option.iter (fun d ->
-                Actor.send d { Timeflies.X = int me.clientX; Timeflies.Y = int me.clientY })
+                Actor.send d {
+                    Timeflies.X = int me.clientX
+                    Timeflies.Y = int me.clientY
+                })
 
         document.addEventListener ("mousemove", handler)
 
-        { new System.IDisposable with
-            member _.Dispose() =
-                document.removeEventListener ("mousemove", handler) })
+        {
+            new System.IDisposable with
+                member _.Dispose() =
+                    document.removeEventListener ("mousemove", handler)
+        })
 
     Html.div [
-        prop.style [
-            style.width (length.vw 100)
-            style.height (length.vh 100)
-        ]
+        prop.style [ style.width (length.vw 100); style.height (length.vh 100) ]
         prop.children [
             for i in 0 .. Timeflies.text.Length - 1 do
                 let x, y = posRef.current.[i]
@@ -89,7 +93,6 @@ let App () =
 // Mount
 // ---------------------------------------------------------------------------
 
-let root =
-    ReactDOM.createRoot (document.getElementById "app")
+let root = ReactDOM.createRoot (document.getElementById "app")
 
 root.render (App())

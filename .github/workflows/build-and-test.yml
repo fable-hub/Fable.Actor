@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
@@ -17,6 +18,8 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
+          cache: true
+          cache-dependency-path: src/Fable.Actor/Fable.Actor.fsproj
 
       - name: Setup declared Erlang/OTP and Rebar
         uses: jdx/mise-action@v4
@@ -29,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -40,10 +43,14 @@ jobs:
       - name: Restore dependencies
         run: dotnet tool restore
 
-      - name: Build library
-        run: dotnet build src/Fable.Actor
+      # decision: enforces formatting and compiler warnings in CI because both were documented gates nothing enforced
+      - name: Check formatting
+        run: just format-check
 
-      # The shared suite (test/shared) runs on .NET, Python, JS and BEAM
+      - name: Build library
+        run: dotnet build src/Fable.Actor -warnaserror
+
+      # The shared suite (test/) runs on .NET, Python, JS and BEAM
       - name: Run .NET tests
         run: just test-native
 
@@ -61,6 +68,16 @@ jobs:
 
       - name: Build BEAM library and Timeflies example
         run: just build-timeflies
+
+      # Every example is compiled even when its UI cannot run headless, so an
+      # example that no longer builds fails the pull request.
+      # invariant: each example directory is compiled by some CI step
+      # tradeoff: compile-only coverage cannot catch a broken runtime interaction in an example
+      - name: Build remaining examples
+        run: |
+          just build-timeflies-python
+          just build-timeflies-js
+          just build-interop
 
       - name: Pack NuGet
         run: just pack

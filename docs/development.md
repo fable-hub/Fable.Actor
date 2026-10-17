@@ -14,6 +14,7 @@ mise install
 just check       # Type-check library and tests
 just build       # Generate Erlang and compile the BEAM library
 just format      # Format F# source
+just format-check # Verify formatting, the same check CI runs
 ```
 
 ## Test
