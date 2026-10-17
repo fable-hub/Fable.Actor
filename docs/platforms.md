@@ -9,6 +9,14 @@ Use `actor { }` for portable bodies and communicate through message handles.
 | Python | Fable `MailboxProcessor` and Async | Requests cancellation and observes body/owned-child exit |
 | BEAM | Native Erlang process and mailbox | Force-kills and observes native process death; skips finalizers |
 
+For an ordinary BEAM actor, `Actor.stop` returns `Completed Cancelled` when it
+observes process death. This does not prove that the body was cancelled or ran
+its finalizers. It also does not preserve a `Normal` or `Failed` exit that
+happened before the stop: the ordinary handle retains no terminal result.
+Use [Lifetimes](lifetimes.md) for cooperative cancellation and retained exit
+outcomes. Its stop operation can time out while noncooperative work remains
+blocked.
+
 ## State and operations
 
 BEAM processes have separate heaps. Captured values are copied, so mutable

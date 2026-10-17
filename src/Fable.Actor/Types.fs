@@ -38,6 +38,8 @@ type ActorExit =
     | Failed of exn
 
 /// A stop deadline bounds observation, not arbitrary user work.
+/// On ordinary BEAM, Completed Cancelled confirms process death; it does not
+/// prove body cancellation or retain an exit that occurred before stop.
 [<RequireQualifiedAccess>]
 type StopResult =
     | Completed of ActorExit
