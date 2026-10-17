@@ -53,6 +53,30 @@ let private commonReferences () =
             ()
     }
 
+#if FABLE_COMPILER_BEAM
+let private referenceFromPid () =
+    actor {
+        let update count (message, reply) =
+            match message with
+            | Increment -> count + 1
+            | Decrement -> count - 1
+            | GetCount ->
+                reply.Reply count
+                count
+
+        let target: Actor<CounterMsg * ReplyChannel<int>> = Actor.spawn (0, update)
+        let pid = Actor.pid target
+        let reconstructed = Actor.fromPid pid
+
+        assertThat (Fable.Beam.Erlang.exactEquals (box (Actor.pid reconstructed)) (box pid)) isTrue
+        Actor.cast reconstructed Increment
+        let! count = Actor.callWithTimeout deadline reconstructed GetCount
+        assertThat count (isEqualTo 1)
+        let! _ = Actor.stop deadline target
+        return ()
+    }
+#endif
+
 let private allStateFactories () =
     actor {
         let update count (message, reply) =
@@ -399,6 +423,9 @@ let tests =
         "Unified actor API",
         [
             case "every authoring form shares a typed call and cast reference" commonReferences
+#if FABLE_COMPILER_BEAM
+            case "a PID rewraps as a typed actor message reference" referenceFromPid
+#endif
             case "cooperative state and command factories share typed messaging" allStateFactories
             case "linked factory overloads retain ordinary and cooperative ownership" linkedStateFactories
             case "Async factories are inert and immediate commands return typed messages" asyncAndMessageConstructors
