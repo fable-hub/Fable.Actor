@@ -1,12 +1,15 @@
 ---
-last_commit_released: 7d056df3a0ceb62db2ce3bb87d6daf6bbabce4d0
+last_commit_released: 3ed8a04c773f7b2986f80d1932dc51c5ce739285
 name: Fable.Actor
-force_version: 5.0.0-rc.18
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.18 - 2026-10-17
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/7d056df3a0ceb62db2ce3bb87d6daf6bbabce4d0..3ed8a04c773f7b2986f80d1932dc51c5ce739285)</small></strong>
 
 ## 5.0.0-rc.17 - 2026-10-13
 
