@@ -14,11 +14,9 @@ module InteropExample
 open Fable.Core
 open Fable.Actor.Types
 open Fable.Actor
+open Fable.Beam
 
 // --- Erlang FFI helpers ---
-
-[<Emit("io:format($0, $1)")>]
-let private printfmt (fmt: string) (args: obj list) : unit = nativeOnly
 
 /// Send a raw message to an Erlang pid (no {fable_actor_msg, ...} envelope)
 [<Emit("$0 ! $1")>]
@@ -45,13 +43,13 @@ let startDag (joePid: obj) : Actor<DagMsg * ReplyChannel<string>> =
         (fun joePid (msg, rc) ->
             match msg with
             | HelloFrom name ->
-                printfmt "  [Dag/F#]     Received hello from ~s~n" [ name ]
+                Io.format "  [Dag/F#]     Received hello from ~s~n" [ name ]
                 // Reply directly to Joe using raw Erlang send (no envelope)
                 rawSend joePid "Hei Joe! Dag her. Hyggelig å møte deg!"
                 Continue joePid
 
             | AskName ->
-                printfmt "  [Dag/F#]     Someone asked my name~n" []
+                Io.format "  [Dag/F#]     Someone asked my name~n" []
                 rc.Reply "Dag Brattli"
                 Continue joePid)
     )

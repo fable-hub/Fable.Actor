@@ -22,9 +22,7 @@ module Helpers =
 
 #if FABLE_COMPILER_BEAM
     open Fable.Core
-
-    [<Emit("timer:sleep($0)")>]
-    let private sleepMs (ms: int) : unit = nativeOnly
+    open Fable.Beam
 
     [<Emit("element(2, process_info(self(), message_queue_len))")>]
     let queueLength () : int = nativeOnly
@@ -32,19 +30,25 @@ module Helpers =
     [<Emit("length(element(2, process_info(self(), monitors)))")>]
     let monitorCount () : int = nativeOnly
 
-    [<Emit("process_flag(priority, high)")>]
-    let highPriority () : obj = nativeOnly
+    let highPriority () : obj =
+        Erlang.processFlag (Atom.ofString "priority") (box (Atom.ofString "high"))
 
-    [<Emit("process_flag(priority, $0), ok")>]
-    let restorePriority (priority: obj) : unit = nativeOnly
+    let restorePriority (priority: obj) : unit =
+        Erlang.processFlag (Atom.ofString "priority") priority
+        |> ignore
 
-    [<Emit("lists:member($0, element(2, process_info(self(), links)))")>]
-    let private linkedPid (pid: Fable.Beam.Pid<'Msg>) : bool = nativeOnly
+    [<Emit("element(2, process_info(self(), links))")>]
+    let private selfLinks<'Msg> () : Lists.BeamList<Pid<'Msg>> = nativeOnly
+
+    let private linkedPid (pid: Pid<'Msg>) : bool = Lists.``member`` pid (selfLinks ())
 
     let isLinked (target: Actor<'Msg>) = linkedPid target.Pid
 
-    [<Emit("lists:member($1, element(2, process_info($0, links)))")>]
-    let private linkedToPid (parent: Fable.Beam.Pid<'Parent>) (child: Fable.Beam.Pid<'Msg>) : bool = nativeOnly
+    [<Emit("element(2, process_info($0, links))")>]
+    let private processLinks<'Parent, 'Msg> (pid: Pid<'Parent>) : Lists.BeamList<Pid<'Msg>> = nativeOnly
+
+    let private linkedToPid (parent: Pid<'Parent>) (child: Pid<'Msg>) : bool =
+        Lists.``member`` child (processLinks parent)
 
     let isLinkedTo (parent: Actor<'Parent>) (child: Actor<'Msg>) = linkedToPid parent.Pid child.Pid
 
@@ -61,7 +65,7 @@ module Helpers =
     /// Suspend the current actor for `ms` milliseconds.
     let sleep (ms: int) : ActorOp<unit> =
         actor {
-            sleepMs ms
+            Timer.sleep ms
             return ()
         }
 

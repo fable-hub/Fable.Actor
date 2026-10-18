@@ -41,8 +41,8 @@ module internal LifetimesRuntime =
     open Fable.Core
     open Fable.Core.BeamInterop
 
-    [<Emit("element(1, $0)")>]
-    let private workerPid (handle: obj) : Fable.Beam.Pid<'Message> = nativeOnly
+    let private workerPid (handle: obj) : Fable.Beam.Pid<'Message> =
+        Fable.Beam.Erlang.element 1 handle |> unbox
 
     let private create parent body =
         let handle =

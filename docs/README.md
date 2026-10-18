@@ -19,4 +19,5 @@ The library is experimental.
 For target differences, see [Platform notes](platforms.md). To build the repo,
 run tests or try Timeflies, see [Development](development.md).
 [Maintainer notes](maintainers/lifetimes.md) cover controller internals, runtime
-probes and validation evidence.
+probes and validation evidence. [BEAM binding promotions](maintainers/fable-beam-promotions.md)
+tracks the hand-written Erlang that belongs in Fable.Beam instead.
