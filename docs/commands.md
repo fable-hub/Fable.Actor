@@ -116,6 +116,6 @@ ordering, termination predicates, shared typed references, cooperative finalizer
 timeout/retry, retained failures and transitive ownership.
 
 `just test-command-package` restores a packed artifact into an independent cache
-and checks an external .NET/JavaScript consumer. Negative compiler checks reject
-mismatched completion/input types, wrongly typed sends, and receiving through a
-public message reference.
+and checks an external consumer on all four targets. Negative compiler checks
+reject mismatched completion/input types, wrongly typed sends, and receiving
+through a public message reference.

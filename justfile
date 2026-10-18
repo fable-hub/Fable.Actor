@@ -95,8 +95,10 @@ test: test-native test-python test-js test-beam
 test-native:
     dotnet run --project {{test_path}}
 
-# Restore the command surface from a packed artifact in a fresh external consumer.
 # invariant: this consumer has no source-project reference or access to internal command constructors
+# invariant: the packed source executes on every supported target, not just the source-project suite
+# decision: resolve mise tools before entering the temporary consumer because that directory has no mise.toml
+# Restore the command surface from a packed artifact in a fresh external consumer.
 test-command-package:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -123,6 +125,10 @@ test-command-package:
     {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang javascript --outDir "$command_package_workspace/output"
     echo '{"type":"module"}' > "$command_package_workspace/output/package.json"
     node "$command_package_workspace/output/Main.js"
+    {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang python --outDir "$command_package_workspace/python"
+    uv run python "$command_package_workspace/python/main.py"
+    {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang beam --outDir "$command_package_workspace/beam"
+    {{beam}} bash -c 'cd "$1" && rebar3 compile && erl -noshell -pa _build/default/lib/*/ebin -eval "main:main([])"' bash "$command_package_workspace/beam"
 
 # Python target: compile the suite to Python and run the explicit runner
 test-python:
@@ -202,9 +208,15 @@ run-timeflies-js: build-timeflies-js
 
 # --- Interop example ---
 
-# decision: compiles without running because the demo needs a hand-written Erlang peer to talk to
 # Compile the native Erlang interoperability example to BEAM
 build-interop:
     rm -rf {{build_path}}/interop
     {{fable}} examples/interop/src --exclude Fable.Core --lang beam --outDir {{build_path}}/interop --noCache
     cd {{build_path}}/interop && {{beam}} rebar3 compile
+
+# invariant: Erlang-to-F# messages and replies must match the compiled actor wire protocol
+# Run the native Erlang peer against the compiled F# example
+test-interop: build-interop
+    cp examples/interop/erl/interop_demo.erl {{build_path}}/interop/src/
+    cd {{build_path}}/interop && {{beam}} rebar3 compile
+    cd {{build_path}}/interop && {{beam}} erl -noshell -pa _build/default/lib/*/ebin -eval 'try interop_demo:run() of ok -> halt(0) catch Class:Reason:Stack -> io:format("Interop failed: ~p:~p~n~p~n", [Class, Reason, Stack]), halt(1) end.'
