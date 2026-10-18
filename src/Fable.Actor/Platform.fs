@@ -39,7 +39,7 @@ let formatReason (reason: obj) : string = Erlang.formatTerm reason
 /// invariant: CompiledName values match the tags consumed by native Erlang interoperability code
 type InternalMsg =
     | [<CompiledName("fable_actor_msg")>] ActorMsg of payload: obj
-    | [<CompiledName("fable_actor_reply")>] Reply of ref: Ref<obj> * value: obj
+    | [<CompiledName("fable_actor_reply")>] Reply of alias: Alias<InternalMsg> * value: obj
     | [<CompiledName("EXIT")>] Exit of pid: Pid<obj> * reason: obj
 
 // ============================================================================
@@ -51,11 +51,6 @@ type InternalMsg =
 let sendMsg (pid: Pid<'Msg>) (msg: 'Msg) : unit =
     Erlang.send (unbox<Pid<InternalMsg>> pid) (ActorMsg(box msg))
 
-/// Send a tagged reply: Pid ! {fable_actor_reply, Ref, Value}.
-/// The envelope tag comes from InternalMsg.Reply's CompiledName.
-let sendReply (pid: Pid<'Caller>) (ref: Ref<'Reply>) (value: 'Reply) : unit =
-    Erlang.send (unbox<Pid<InternalMsg>> pid) (Reply(unbox<Ref<obj>> ref, box value))
-
 /// Block until a user message or abnormal child exit is available.
 ///
 /// decision: drops stale replies and normal exits because neither is an application message
@@ -66,19 +61,6 @@ let rec receiveMsg (cont: obj -> unit) : unit =
     | Reply _ -> receiveMsg cont // stray reply (ref already timed out); drop and keep waiting
     | Exit(_, reason) when Erlang.exactEquals reason atomNormal -> receiveMsg cont
     | Exit(pid, reason) -> cont (box ({ Pid = box pid; Reason = reason }: ChildExited))
-
-/// Block until the reply matching a specific ref arrives.
-///
-/// decision: emits the receive expression directly to preserve Erlang bound-variable matching semantics
-/// invariant: replies with other refs remain in the mailbox
-let recvReply (ref: Ref<'Reply>) : 'Reply =
-    emitErlExpr ref "receive {fable_actor_reply, $0, FableReply} -> FableReply end"
-
-/// Selectively receive a reply or return None after the timeout.
-///
-/// invariant: timing out does not consume a late or unrelated reply
-let recvReplyWithTimeout (ref: Ref<'Reply>) (timeout: int) : 'Reply option =
-    emitErlExpr (ref, timeout) "receive {fable_actor_reply, $0, FableReply} -> {some, FableReply} after $1 -> undefined end"
 
 // ============================================================================
 // Child exit detection
@@ -181,16 +163,16 @@ let exitReason (reason: obj) : ActorExit =
 let monotonicMilliseconds () : int64 =
     emitErlExpr () "erlang:monotonic_time(millisecond)"
 
-let beginCall (pid: Pid<'Msg>) : Ref<obj> * Ref<Pid<'Msg>> =
-    emitErlExpr pid "{erlang:alias([explicit_unalias]), erlang:monitor(process, $0)}"
+let beginCall (pid: Pid<'Msg>) : Alias<InternalMsg> * Ref<Pid<'Msg>> =
+    Erlang.aliasWithOptions [ Erlang.AliasOption.ExplicitUnalias ], Erlang.monitor pid
 
-let sendAliasReply (alias: Ref<obj>) (value: 'Reply) : unit =
-    emitErlExpr (alias, value) "$0 ! {fable_actor_reply, $0, $1}, ok"
+let sendAliasReply (alias: Alias<InternalMsg>) (value: 'Reply) : unit =
+    Erlang.sendAlias alias (Reply(alias, box value))
 
 /// Receive only this request's reply or target monitor signal.
 ///
 /// invariant: unrelated application messages, links, and monitors remain untouched
-let recvCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) (slice: int) : int * obj =
+let recvCall (alias: Alias<InternalMsg>) (monitor: Ref<Pid<'Msg>>) (slice: int) : int * obj =
     emitErlExpr
         (alias, monitor, slice)
         """
@@ -201,12 +183,14 @@ let recvCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) (slice: int) : int * ob
     """
 
 /// Revoke first, then flush, so no reply can arrive after the flush.
-let endCall (alias: Ref<obj>) (monitor: Ref<Pid<'Msg>>) : unit =
+let endCall (alias: Alias<InternalMsg>) (monitor: Ref<Pid<'Msg>>) : unit =
+    Erlang.unalias alias |> ignore
+    Erlang.demonitorFlush monitor
+
     emitErlExpr
-        (alias, monitor)
+        alias
         """
     (fun() ->
-        unalias($0), demonitor($1, [flush]),
         Flush = fun Loop() ->
             receive {fable_actor_reply, $0, _} -> Loop() after 0 -> ok end
         end,

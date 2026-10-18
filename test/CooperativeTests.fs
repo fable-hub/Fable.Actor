@@ -582,14 +582,14 @@ let private terminalAttachment () =
 
 #if FABLE_COMPILER_BEAM
 open Fable.Core.BeamInterop
+open Fable.Beam
 
-let private nativeGuard (CooperativeActor(_, handle)) : obj = emitErlExpr handle "element(2, $0)"
+let private nativeGuard (CooperativeActor(_, handle)) : obj = Erlang.element 2 handle
 
 let private nativeMonitors guard : int =
     emitErlExpr guard "length(element(2, process_info($0, monitors)))"
 
-let private monitorNative guard : obj =
-    emitErlExpr guard "monitor(process, $0)"
+let private monitorNative guard = Erlang.monitor (unbox<Pid<obj>> guard)
 
 let private nativeDown monitor : bool =
     emitErlExpr (monitor, deadline) "receive {'DOWN', $0, process, _, _} -> true after $1 -> demonitor($0, [flush]), false end"
@@ -878,7 +878,7 @@ let private deferredRelease () =
         let guard = nativeGuard owner
         let observed = monitorNative guard
         Lifetimes.releaseWhenExited owner
-        let running: bool = emitErlExpr guard "is_process_alive($0)"
+        let running = Erlang.isProcessAlive (unbox<Pid<obj>> guard)
         assertThat running isTrue
         let! count = Actor.callWithTimeout deadline cleaned Read
         assertThat count (isEqualTo 0)
