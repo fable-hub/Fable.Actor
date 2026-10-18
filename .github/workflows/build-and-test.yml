@@ -72,12 +72,14 @@ jobs:
       # Every example is compiled even when its UI cannot run headless, so an
       # example that no longer builds fails the pull request.
       # invariant: each example directory is compiled by some CI step
-      # tradeoff: compile-only coverage cannot catch a broken runtime interaction in an example
+      # tradeoff: UI examples are compile-only because they need a browser or server
       - name: Build remaining examples
         run: |
           just build-timeflies-python
           just build-timeflies-js
-          just build-interop
+
+      - name: Test native Erlang interoperability
+        run: just test-interop
 
       - name: Pack NuGet
         run: just pack

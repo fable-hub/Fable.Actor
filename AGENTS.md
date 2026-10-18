@@ -23,7 +23,8 @@ just test                        # Shared suite on .NET + Python + JS + BEAM
 just test-native                 # .NET only (fastest feedback loop)
 just test-beam                   # BEAM only
 just build-interop               # Compile the native Erlang interop example
-just test-command-package        # BEAM command/lifetime regression suite
+just test-interop                # Run the native Erlang interop example
+just test-command-package        # Packed command consumer on all four targets
 just build-timeflies             # BEAM Timeflies example (library included)
 just build-timeflies-python      # Python Timeflies example
 just build-timeflies-js          # JavaScript Timeflies example
@@ -31,8 +32,8 @@ just build-timeflies-js          # JavaScript Timeflies example
 
 CI enforces `just format-check`, a warning-free library build
 (`dotnet build src/Fable.Actor -warnaserror`), the suite on all four targets,
-`just test-command-package` and a compile of every example. Run those locally
-before pushing.
+`just test-command-package`, `just test-interop`, and a compile of every
+example. Run those locally before pushing.
 
 ## Agent Decision Comments
 
@@ -174,8 +175,8 @@ as `*.fs.js` sidecars. `just build-timeflies-js` is the historical example.
 
 `examples/timeflies/src/Timeflies.fs` is the shared demo core (a distributor
 fanning out to one linked actor per letter) that all three UI targets reference;
-the suite executes it. `examples/interop` documents the BEAM wire protocol and is
-compile-only, since the demo needs a hand-written Erlang peer.
+the suite executes it. `examples/interop` documents the BEAM wire protocol;
+`just test-interop` runs it against its hand-written Erlang peer.
 
 ## Dependencies
 

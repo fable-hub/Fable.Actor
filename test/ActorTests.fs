@@ -415,6 +415,28 @@ let private scheduleTests =
                         }
                     )
             )
+            testAsync (
+                "cancelled callbacks do not fire",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let callbacks = collector ()
+
+                            let cancelled =
+                                Actor.schedule 20 (fun () -> Actor.cast callbacks (Collect "cancelled"))
+
+                            Actor.cancelTimer cancelled
+
+                            Actor.schedule 100 (fun () -> Actor.cast callbacks (Collect "sentinel"))
+                            |> ignore
+
+                            let! values = Actor.callWithTimeout 2000 callbacks (GetResults 1)
+                            assertThat values (isEqualTo [ "sentinel" ])
+                            let! _ = Actor.stop 2000 callbacks
+                            return ()
+                        }
+                    )
+            )
         ]
     )
 
@@ -431,24 +453,29 @@ let private killTests =
                 fun _ ->
                     toAsync (
                         actor {
-                            let mutable received = false
+                            let received = collector ()
 
                             let target: Actor<string> =
                                 Actor.spawn (fun inbox ->
                                     let rec loop () =
                                         actor {
-                                            let! _msg = inbox.Receive()
-                                            received <- true
+                                            let! msg = inbox.Receive()
+                                            Actor.cast received (Collect msg)
                                             return! loop ()
                                         }
 
                                     loop ())
 
+                            Actor.send target "before kill"
+                            let! before = Actor.callWithTimeout 2000 received (GetResults 1)
+                            assertThat before (isEqualTo [ "before kill" ])
                             Actor.kill target
+                            do! observeExit target
                             Actor.send target "should not arrive"
-                            do! sleep 50
-
-                            assertThat received isFalse
+                            let! after = Actor.callWithTimeout 2000 received (GetResults 1)
+                            assertThat after (isEqualTo before)
+                            let! _ = Actor.stop 2000 received
+                            return ()
                         }
                     )
             )

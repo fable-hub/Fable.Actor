@@ -53,3 +53,19 @@ let startDag (joePid: obj) : Actor<DagMsg * ReplyChannel<string>> =
                 rc.Reply "Dag Brattli"
                 Continue joePid)
     )
+
+/// Return the native PID so the Erlang peer can use the documented actor envelope.
+let startDagPid joePid = Actor.pid (startDag joePid)
+
+#if FABLE_COMPILER_BEAM
+/// Exercise a wrapped native Erlang actor through the public request protocol.
+/// invariant: the native peer replies through the supplied channel rather than a raw mailbox send
+let startNativeJoeCall (nativePid: Pid<DagMsg * ReplyChannel<string>>) (reportPid: obj) =
+    Actor.spawn (fun _ ->
+        actor {
+            let nativeJoe = Actor.fromPid nativePid
+            let! name = Actor.callWithTimeout 5000 nativeJoe AskName
+            rawSend reportPid name
+        })
+    |> ignore
+#endif

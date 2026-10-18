@@ -166,6 +166,68 @@ let private supervisedTests =
                         }
                     )
             )
+            testAsync (
+                "OneForOne Escalate terminates the parent with the child failure",
+                fun _ ->
+                    toAsync (
+                        actor {
+                            let failure = reporter ""
+                            let propagated = reporter false
+
+                            let grandparent: Actor<obj> =
+                                Actor.spawn (fun inbox ->
+                                    Actor.trapExits ()
+
+                                    let _parent: Actor<obj> =
+                                        Actor.spawnLinked (
+                                            inbox.Reference,
+                                            fun parentInbox ->
+                                                Actor.trapExits ()
+
+                                                let child =
+                                                    Actor.spawnSupervised
+                                                        parentInbox.Reference
+                                                        (OneForOne(fun error ->
+                                                            Actor.cast failure (Some error.Message)
+                                                            Directive.Escalate))
+                                                        (fun childInbox ->
+                                                            actor {
+                                                                let! _ = childInbox.Receive()
+                                                                failwith "escalated child failure"
+                                                            })
+
+                                                Actor.send child.Actor "crash"
+
+                                                actor {
+                                                    let! message = parentInbox.Receive()
+
+                                                    match Actor.tryAsChildExited message with
+                                                    | Some exited ->
+                                                        Actor.handleChildExit parentInbox.Reference child exited
+                                                        |> ignore
+                                                    | None -> failwith "Expected a child exit"
+                                                }
+                                        )
+
+                                    actor {
+                                        let! message = inbox.Receive()
+
+                                        match Actor.tryAsChildExited message with
+                                        | Some _ -> Actor.cast propagated (Some true)
+                                        | None -> failwith "Expected the parent to fail"
+                                    })
+
+                            do! observeExit grandparent
+                            let! escalated = Actor.callWithTimeout 2000 propagated None
+                            assertThat escalated isTrue
+                            let! reason = Actor.callWithTimeout 2000 failure None
+                            assertThat (reason.Contains "escalated child failure") isTrue
+                            let! _ = Actor.stop 2000 propagated
+                            let! _ = Actor.stop 2000 failure
+                            return ()
+                        }
+                    )
+            )
         ]
     )
 
