@@ -97,6 +97,7 @@ test-native:
 
 # invariant: this consumer has no source-project reference or access to internal command constructors
 # invariant: the packed source executes on every supported target, not just the source-project suite
+# decision: resolve mise tools before entering the temporary consumer because that directory has no mise.toml
 # Restore the command surface from a packed artifact in a fresh external consumer.
 test-command-package:
     #!/usr/bin/env bash
@@ -127,7 +128,7 @@ test-command-package:
     {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang python --outDir "$command_package_workspace/python"
     uv run python "$command_package_workspace/python/main.py"
     {{fable}} "$command_package_workspace/consumer" --exclude Fable.Core --lang beam --outDir "$command_package_workspace/beam"
-    (cd "$command_package_workspace/beam" && {{beam}} rebar3 compile && {{beam}} erl -noshell -pa _build/default/lib/*/ebin -eval 'main:main([])')
+    {{beam}} bash -c 'cd "$1" && rebar3 compile && erl -noshell -pa _build/default/lib/*/ebin -eval "main:main([])"' bash "$command_package_workspace/beam"
 
 # Python target: compile the suite to Python and run the explicit runner
 test-python:
