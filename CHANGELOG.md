@@ -1,11 +1,19 @@
 ---
-last_commit_released: 3ed8a04c773f7b2986f80d1932dc51c5ce739285
+last_commit_released: cdae99bf44f16261928f8260a28e5eb81cca83ca
 name: Fable.Actor
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## 5.0.0-rc.19 - 2026-10-18
+
+### 🚀 Features
+
+* Expose BEAM actor references from typed PIDs (#88) ([39a579f](https://github.com/fable-hub/Fable.Actor/commit/39a579fbff56843c31cd98394c7d48fcea2df92c))
+
+<strong><small>[View changes on Github](https://github.com/fable-hub/Fable.Actor/compare/3ed8a04c773f7b2986f80d1932dc51c5ce739285..cdae99bf44f16261928f8260a28e5eb81cca83ca)</small></strong>
 
 ## 5.0.0-rc.18 - 2026-10-17
 
